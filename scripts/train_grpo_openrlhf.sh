@@ -15,6 +15,10 @@ GRPO_OUTPUT_DIR="${GRPO_OUTPUT_DIR:-checkpoints/qwen2.5-coder-3b-logtir-grpo}"
 GRPO_CKPT_DIR="${GRPO_CKPT_DIR:-checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt}"
 GRPO_ACTOR_MODEL="${GRPO_ACTOR_MODEL:-checkpoints/qwen2.5-coder-3b-logtir-sft}"
 GRPO_REWARD_FUNC="${GRPO_REWARD_FUNC:-openrlhf_reward.py}"
+GRPO_AGENT_FUNC="${GRPO_AGENT_FUNC:-openrlhf_agent.py}"
+GRPO_MULTI_TURN="${GRPO_MULTI_TURN:-1}"
+LOGTIR_AGENT_MAX_TURNS="${LOGTIR_AGENT_MAX_TURNS:-2}"
+LOGTIR_AGENT_TIMEOUT="${LOGTIR_AGENT_TIMEOUT:-3.0}"
 GRPO_GPUS_PER_NODE="${GRPO_GPUS_PER_NODE:-1}"
 GRPO_VLLM_ENGINES="${GRPO_VLLM_ENGINES:-1}"
 GRPO_VLLM_TP="${GRPO_VLLM_TP:-1}"
@@ -31,6 +35,26 @@ GRPO_KL_ESTIMATOR="${GRPO_KL_ESTIMATOR:-k3}"
 GRPO_EVAL_DATA="${GRPO_EVAL_DATA:-data/rl/spider_grpo_dev_100.jsonl}"
 GRPO_EVAL_STEPS="${GRPO_EVAL_STEPS:-50}"
 RAY_ADDRESS="${RAY_ADDRESS:-http://127.0.0.1:8265}"
+LOGTIR_ENABLE_RUN_LOGS="${LOGTIR_ENABLE_RUN_LOGS:-1}"
+
+if [[ "$LOGTIR_ENABLE_RUN_LOGS" == "1" ]]; then
+  LOGTIR_RUN_DIR="$(python3 run_logging.py prepare --kind grpo --repo-root "$REPO_ROOT")"
+  export LOGTIR_RUN_DIR
+  if [[ "${LOGTIR_LOG_REDIRECTED:-0}" != "1" ]]; then
+    export LOGTIR_LOG_REDIRECTED=1
+    exec > >(tee -a "$LOGTIR_RUN_DIR/train.stdout.log") 2> >(tee -a "$LOGTIR_RUN_DIR/train.stderr.log" >&2)
+  fi
+  echo "Log-TIR run dir: $LOGTIR_RUN_DIR"
+fi
+
+WANDB_ARGS=()
+if [[ "${LOGTIR_WANDB:-0}" == "1" ]]; then
+  if [[ -z "${WANDB_API_KEY:-}" ]]; then
+    echo "LOGTIR_WANDB=1 requires WANDB_API_KEY" >&2
+    exit 1
+  fi
+  WANDB_ARGS=(--use_wandb "$WANDB_API_KEY")
+fi
 
 if [[ ! -f "$GRPO_PROMPT_DATA" ]]; then
   echo "Missing GRPO prompt data: $GRPO_PROMPT_DATA" >&2
@@ -38,9 +62,16 @@ if [[ ! -f "$GRPO_PROMPT_DATA" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$GRPO_REWARD_FUNC" ]]; then
-  echo "Missing reward function: $GRPO_REWARD_FUNC" >&2
-  exit 1
+if [[ "$GRPO_MULTI_TURN" == "1" ]]; then
+  if [[ ! -f "$GRPO_AGENT_FUNC" ]]; then
+    echo "Missing agent function: $GRPO_AGENT_FUNC" >&2
+    exit 1
+  fi
+else
+  if [[ ! -f "$GRPO_REWARD_FUNC" ]]; then
+    echo "Missing reward function: $GRPO_REWARD_FUNC" >&2
+    exit 1
+  fi
 fi
 
 case "$GRPO_PROMPT_DATA" in
@@ -52,6 +83,18 @@ case "$GRPO_REWARD_FUNC" in
   /*) ;;
   *) GRPO_REWARD_FUNC="$REPO_ROOT/$GRPO_REWARD_FUNC" ;;
 esac
+
+case "$GRPO_AGENT_FUNC" in
+  /*) ;;
+  *) GRPO_AGENT_FUNC="$REPO_ROOT/$GRPO_AGENT_FUNC" ;;
+esac
+
+if [[ "$GRPO_MULTI_TURN" == "1" ]]; then
+  export LOGTIR_AGENT_MAX_TURNS LOGTIR_AGENT_TIMEOUT
+  AGENT_ARGS=(--agent_func_path "$GRPO_AGENT_FUNC")
+else
+  AGENT_ARGS=(--reward.remote_url "$GRPO_REWARD_FUNC")
+fi
 
 if [[ -f "$GRPO_EVAL_DATA" ]]; then
   case "$GRPO_EVAL_DATA" in
@@ -84,7 +127,7 @@ ray job submit --address="$RAY_ADDRESS" \
   --vllm.tensor_parallel_size "$GRPO_VLLM_TP" \
   --train.colocate_actor_ref \
   --actor.model_name_or_path "$GRPO_ACTOR_MODEL" \
-  --reward.remote_url "$GRPO_REWARD_FUNC" \
+  "${AGENT_ARGS[@]}" \
   --ckpt.output_dir "$GRPO_OUTPUT_DIR" \
   --ckpt.path "$GRPO_CKPT_DIR" \
   --ckpt.save_hf \
@@ -108,4 +151,5 @@ ray job submit --address="$RAY_ADDRESS" \
   --ds.packing_samples \
   --vllm.sync_backend nccl \
   --vllm.enforce_eager \
-  --train.dynamic_batch_enable
+  --train.dynamic_batch_enable \
+  "${WANDB_ARGS[@]}"

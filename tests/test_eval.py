@@ -80,3 +80,38 @@ def test_evaluate_dataset_with_gold_predictions(tmp_path: Path) -> None:
     assert report["total"] == 1
     assert report["matched"] == 1
     assert report["accuracy"] == 1.0
+
+
+def test_evaluate_dataset_with_bird_fixture(tmp_path: Path) -> None:
+    bird_root = tmp_path / "bird"
+    db_root = bird_root / "dev_databases" / "toy_db"
+    db_root.mkdir(parents=True)
+    db_path = db_root / "toy_db.sqlite"
+    _build_db(db_path)
+    dev_path = bird_root / "dev.json"
+    dev_path.write_text(
+        json.dumps(
+            [
+                {
+                    "db_id": "toy_db",
+                    "question": "How many numbers are present?",
+                    "SQL": "select count(*) from numbers",
+                    "evidence": "numbers means rows in the numbers table",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = evaluate_dataset(
+        dev_path=dev_path,
+        spider_root=bird_root,
+        pred_path=None,
+        use_gold_predictions=True,
+        timeout_s=3.0,
+        limit=None,
+        dataset="bird",
+    )
+    assert report["total"] == 1
+    assert report["matched"] == 1
+    assert report["accuracy"] == 1.0

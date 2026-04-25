@@ -67,6 +67,7 @@ Spider evaluator:
 ```bash
 python3 eval.py --spider-root data/spider --use-gold-predictions --limit 100
 python3 eval.py --spider-root data/spider --use-gold-predictions --failures-out spider_gold_failures.json
+python3 eval.py --dataset bird --data-root data/bird --use-gold-predictions --limit 100
 ```
 
 SFT cold-start data generation:
@@ -87,6 +88,23 @@ OpenRLHF launch scripts:
 ```bash
 bash scripts/train_sft_openrlhf.sh
 START_RAY=1 bash scripts/train_grpo_openrlhf.sh
+GRPO_MULTI_TURN=0 START_RAY=1 bash scripts/train_grpo_openrlhf.sh
+```
+
+Standalone checkpoint inference and evaluation:
+
+```bash
+python3 infer_eval.py --backend vllm --dataset spider --data-root data/spider --model checkpoints/qwen2.5-coder-3b-logtir-sft --output logs/infer_eval_spider_dev.json
+python3 infer_eval.py --backend vllm --dataset bird --data-root data/bird --model checkpoints/qwen2.5-coder-3b-logtir-grpo --output logs/infer_eval_bird_dev.json
+python3 infer_eval.py --backend transformers --dataset spider --data-root data/spider --model checkpoints/qwen2.5-coder-3b-logtir-sft --limit 10
+```
+
+Run logging and remote log sync:
+
+```bash
+LOGTIR_ENABLE_RUN_LOGS=1 bash scripts/train_sft_openrlhf.sh
+LOGTIR_WANDB=1 WANDB_API_KEY=... bash scripts/train_sft_openrlhf.sh
+scripts/sync_logs.sh user@your.server:~/Log-TIR/logs remote-logs
 ```
 
 Direct sandbox smoke tests:

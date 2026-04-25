@@ -18,6 +18,26 @@ SFT_BATCH_SIZE="${SFT_BATCH_SIZE:-64}"
 SFT_MICRO_BATCH_SIZE="${SFT_MICRO_BATCH_SIZE:-1}"
 SFT_MAX_EPOCHS="${SFT_MAX_EPOCHS:-1}"
 SFT_LR="${SFT_LR:-5e-6}"
+LOGTIR_ENABLE_RUN_LOGS="${LOGTIR_ENABLE_RUN_LOGS:-1}"
+
+if [[ "$LOGTIR_ENABLE_RUN_LOGS" == "1" ]]; then
+  LOGTIR_RUN_DIR="$(python3 run_logging.py prepare --kind sft --repo-root "$REPO_ROOT")"
+  export LOGTIR_RUN_DIR
+  if [[ "${LOGTIR_LOG_REDIRECTED:-0}" != "1" ]]; then
+    export LOGTIR_LOG_REDIRECTED=1
+    exec > >(tee -a "$LOGTIR_RUN_DIR/train.stdout.log") 2> >(tee -a "$LOGTIR_RUN_DIR/train.stderr.log" >&2)
+  fi
+  echo "Log-TIR run dir: $LOGTIR_RUN_DIR"
+fi
+
+WANDB_ARGS=()
+if [[ "${LOGTIR_WANDB:-0}" == "1" ]]; then
+  if [[ -z "${WANDB_API_KEY:-}" ]]; then
+    echo "LOGTIR_WANDB=1 requires WANDB_API_KEY" >&2
+    exit 1
+  fi
+  WANDB_ARGS=(--use_wandb "$WANDB_API_KEY")
+fi
 
 if [[ ! -f "$SFT_DATA" ]]; then
   echo "Missing SFT data: $SFT_DATA" >&2
@@ -45,4 +65,5 @@ deepspeed --module openrlhf.cli.train_sft \
   --adam.lr "$SFT_LR" \
   --ckpt.load_enable \
   --ds.packing_samples \
-  --model.gradient_checkpointing_enable
+  --model.gradient_checkpointing_enable \
+  "${WANDB_ARGS[@]}"

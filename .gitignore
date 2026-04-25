@@ -6,6 +6,7 @@ __pycache__/
 data/
 logs/
 remote-logs/
+configs/openrlhf_day3.env
 
 toy.sqlite
 spider_gold_failures.json

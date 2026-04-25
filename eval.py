@@ -6,6 +6,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from dataset_adapter import (
+    load_text_to_sql_examples,
+    resolve_dataset_root,
+    resolve_db_path,
+    resolve_split_file,
+)
 from sandbox import execute_sql
 
 
@@ -98,21 +104,13 @@ def execution_match(
     }
 
 
-def _load_spider_dev(dev_path: Path) -> list[dict[str, Any]]:
-    with dev_path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if not isinstance(payload, list):
-        raise TypeError("Spider dev file must contain a JSON list")
-    return payload
-
-
 def _load_predictions(
     pred_path: Path | None,
-    examples: list[dict[str, Any]],
+    gold_sql: list[str],
     use_gold_predictions: bool,
 ) -> list[str]:
     if use_gold_predictions:
-        return [example["query"] for example in examples]
+        return gold_sql
     if pred_path is None:
         raise ValueError("Provide --pred-file or pass --use-gold-predictions")
 
@@ -128,11 +126,6 @@ def _load_predictions(
     with pred_path.open("r", encoding="utf-8") as handle:
         return [line.rstrip("\n") for line in handle]
 
-
-def _resolve_db_path(spider_root: Path, db_id: str) -> Path:
-    return spider_root / "database" / db_id / f"{db_id}.sqlite"
-
-
 def evaluate_dataset(
     dev_path: Path,
     spider_root: Path,
@@ -140,12 +133,17 @@ def evaluate_dataset(
     use_gold_predictions: bool,
     timeout_s: float,
     limit: int | None,
+    dataset: str = "spider",
 ) -> dict[str, Any]:
-    examples = _load_spider_dev(dev_path)
+    examples = load_text_to_sql_examples(dataset, dev_path)
     if limit is not None:
         examples = examples[:limit]
 
-    predictions = _load_predictions(pred_path, examples, use_gold_predictions)
+    predictions = _load_predictions(
+        pred_path,
+        [example.gold_sql for example in examples],
+        use_gold_predictions,
+    )
     if len(predictions) != len(examples):
         raise ValueError(
             f"Prediction count {len(predictions)} does not match example count {len(examples)}"
@@ -155,8 +153,8 @@ def evaluate_dataset(
     failures: list[dict[str, Any]] = []
 
     for index, (example, pred_sql) in enumerate(zip(examples, predictions)):
-        db_path = _resolve_db_path(spider_root, example["db_id"])
-        outcome = execution_match(pred_sql, example["query"], db_path, timeout_s)
+        db_path = resolve_db_path(dataset, spider_root, example.db_id)
+        outcome = execution_match(pred_sql, example.gold_sql, db_path, timeout_s)
         if outcome["match"]:
             matched += 1
             continue
@@ -164,9 +162,9 @@ def evaluate_dataset(
         failures.append(
             {
                 "index": index,
-                "db_id": example["db_id"],
-                "question": example["question"],
-                "gold_sql": example["query"],
+                "db_id": example.db_id,
+                "question": example.question,
+                "gold_sql": example.gold_sql,
                 "pred_sql": pred_sql,
                 "pred_error": outcome["pred_result"].get("error", ""),
                 "gold_error": outcome["gold_result"].get("error", ""),
@@ -184,13 +182,25 @@ def evaluate_dataset(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Execution-match evaluator for Spider-style dev sets."
+        description="Execution-match evaluator for Spider/BIRD-style dev sets."
+    )
+    parser.add_argument(
+        "--dataset",
+        choices=["spider", "bird"],
+        default="spider",
+        help="Dataset format to evaluate.",
     )
     parser.add_argument(
         "--spider-root",
         type=Path,
         default=Path("data/spider"),
         help="Root directory of the unpacked Spider dataset.",
+    )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Root directory of the dataset. Overrides --spider-root.",
     )
     parser.add_argument(
         "--dev-file",
@@ -229,8 +239,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    spider_root = _resolve_spider_root(args.spider_root)
-    dev_file = _resolve_dev_file(args.dev_file, spider_root)
+    data_root_arg = args.data_root if args.data_root is not None else args.spider_root
+    if args.dataset == "spider":
+        spider_root = _resolve_spider_root(data_root_arg)
+        dev_file = _resolve_dev_file(args.dev_file, spider_root)
+    else:
+        spider_root = resolve_dataset_root(args.dataset, data_root_arg)
+        dev_file = resolve_split_file(args.dataset, spider_root, "dev", args.dev_file)
     report = evaluate_dataset(
         dev_path=dev_file,
         spider_root=spider_root,
@@ -238,6 +253,7 @@ def main() -> int:
         use_gold_predictions=args.use_gold_predictions,
         timeout_s=args.timeout,
         limit=args.limit,
+        dataset=args.dataset,
     )
 
     if args.failures_out is not None:
