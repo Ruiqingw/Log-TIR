@@ -39,6 +39,16 @@ Suggested order:
 3. Run a small gold-SQL smoke test.
 4. Run full Spider dev evaluation and inspect failures.
 
+## Day 2 Focus
+
+Deliverables:
+
+1. Build a Spider-to-SFT conversion script for `<thought>/<action>` cold-start data.
+2. Keep deterministic SFT responses explicitly `format_only`; do not synthesize fake reasoning from gold SQL.
+3. Generate an initial `2000`-example JSONL file from executable Spider training examples.
+4. Optionally export teacher-model prompt requests for real reasoning generation from schema and question only.
+5. Add tests for schema rendering, tagged-response validation, and dataset generation.
+
 ## How To Run
 
 Spider evaluator:
@@ -46,6 +56,12 @@ Spider evaluator:
 ```bash
 python3 eval.py --spider-root data/spider --use-gold-predictions --limit 100
 python3 eval.py --spider-root data/spider --use-gold-predictions --failures-out spider_gold_failures.json
+```
+
+SFT cold-start data generation:
+
+```bash
+python3 sft_data.py --spider-root data/spider --output data/sft/spider_sft_2000.jsonl --limit 2000 --require-executable-gold --teacher-requests-output data/sft/spider_teacher_requests_2000.jsonl
 ```
 
 Direct sandbox smoke tests:
@@ -92,12 +108,14 @@ logs/
 - Normalize execution outputs so numeric and string formatting noise does not dominate reward.
 - Preserve row order for `ORDER BY` queries; otherwise compare as multisets.
 - Do not trust model-side metrics until the gold SQL baseline is validated on the dev split.
+- Do not train on fake chain-of-thought synthesized from gold SQL. Use `thought_mode=format_only` for deterministic SFT, or generate real teacher reasoning from schema and question only.
 
 ## Testing Strategy
 
 - Keep `tests/` focused on small SQLite fixtures built at test time.
 - `sandbox.py` must be covered for timeout handling, syntax errors, read-only rejection, and valid read-only queries.
 - `eval.py` must be covered for `ORDER BY` sensitivity, numeric normalization, and Spider-style dataset evaluation on a tiny synthetic fixture.
+- `sft_data.py` must be covered for schema rendering, `<thought>/<action>` validation, and JSONL generation on a tiny Spider-style fixture.
 - Before changing reward logic or rollout formatting, re-run the Spider gold-SQL evaluator and `pytest`.
 
 ## Engineering Rules
