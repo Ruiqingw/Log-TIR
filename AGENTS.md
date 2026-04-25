@@ -49,6 +49,17 @@ Deliverables:
 4. Optionally export teacher-model prompt requests for real reasoning generation from schema and question only.
 5. Add tests for schema rendering, tagged-response validation, and dataset generation.
 
+## Day 3 Focus
+
+Deliverables:
+
+1. Add OpenRLHF SFT startup script using generated Spider SFT JSONL.
+2. Add OpenRLHF GRPO startup script using `train_ppo_ray` with `--algo.advantage.estimator group_norm`.
+3. Add GRPO prompt/label JSONL generation for reward-time execution matching.
+4. Add local reward function with `format = 0.1`, `no-error = 0.2`, `exec-match = 1.0`.
+5. Add a two-turn self-correction rollout helper that feeds execution feedback into the second prompt.
+6. Keep launch-time settings configurable through `configs/openrlhf_day3.env`.
+
 ## How To Run
 
 Spider evaluator:
@@ -62,6 +73,20 @@ SFT cold-start data generation:
 
 ```bash
 python3 sft_data.py --spider-root data/spider --output data/sft/spider_sft_2000.jsonl --limit 2000 --require-executable-gold --teacher-requests-output data/sft/spider_teacher_requests_2000.jsonl
+```
+
+GRPO prompt data generation:
+
+```bash
+python3 rl_data.py --spider-root data/spider --output data/rl/spider_grpo_train_2000.jsonl --limit 2000
+python3 rl_data.py --spider-root data/spider --split dev --output data/rl/spider_grpo_dev_100.jsonl --limit 100
+```
+
+OpenRLHF launch scripts:
+
+```bash
+bash scripts/train_sft_openrlhf.sh
+START_RAY=1 bash scripts/train_grpo_openrlhf.sh
 ```
 
 Direct sandbox smoke tests:

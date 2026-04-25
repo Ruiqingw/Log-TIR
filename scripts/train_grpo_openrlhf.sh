@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+if [[ -f configs/openrlhf_day3.env ]]; then
+  set -a
+  source configs/openrlhf_day3.env
+  set +a
+fi
+
+GRPO_PROMPT_DATA="${GRPO_PROMPT_DATA:-data/rl/spider_grpo_train_2000.jsonl}"
+GRPO_OUTPUT_DIR="${GRPO_OUTPUT_DIR:-checkpoints/qwen2.5-coder-3b-logtir-grpo}"
+GRPO_CKPT_DIR="${GRPO_CKPT_DIR:-checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt}"
+GRPO_ACTOR_MODEL="${GRPO_ACTOR_MODEL:-checkpoints/qwen2.5-coder-3b-logtir-sft}"
+GRPO_REWARD_FUNC="${GRPO_REWARD_FUNC:-openrlhf_reward.py}"
+GRPO_GPUS_PER_NODE="${GRPO_GPUS_PER_NODE:-1}"
+GRPO_VLLM_ENGINES="${GRPO_VLLM_ENGINES:-1}"
+GRPO_VLLM_TP="${GRPO_VLLM_TP:-1}"
+GRPO_TRAIN_BATCH_SIZE="${GRPO_TRAIN_BATCH_SIZE:-32}"
+GRPO_ROLLOUT_BATCH_SIZE="${GRPO_ROLLOUT_BATCH_SIZE:-32}"
+GRPO_N_SAMPLES_PER_PROMPT="${GRPO_N_SAMPLES_PER_PROMPT:-4}"
+GRPO_MAX_EPOCHS="${GRPO_MAX_EPOCHS:-1}"
+GRPO_MAX_SAMPLES="${GRPO_MAX_SAMPLES:-2000}"
+GRPO_MAX_LEN="${GRPO_MAX_LEN:-4096}"
+GRPO_ACTOR_LR="${GRPO_ACTOR_LR:-5e-7}"
+GRPO_INIT_KL_COEF="${GRPO_INIT_KL_COEF:-0.01}"
+GRPO_USE_KL_LOSS="${GRPO_USE_KL_LOSS:-1}"
+GRPO_KL_ESTIMATOR="${GRPO_KL_ESTIMATOR:-k3}"
+GRPO_EVAL_DATA="${GRPO_EVAL_DATA:-data/rl/spider_grpo_dev_100.jsonl}"
+GRPO_EVAL_STEPS="${GRPO_EVAL_STEPS:-50}"
+RAY_ADDRESS="${RAY_ADDRESS:-http://127.0.0.1:8265}"
+
+if [[ ! -f "$GRPO_PROMPT_DATA" ]]; then
+  echo "Missing GRPO prompt data: $GRPO_PROMPT_DATA" >&2
+  echo "Run: python3 rl_data.py --spider-root data/spider --output $GRPO_PROMPT_DATA --limit 2000" >&2
+  exit 1
+fi
+
+if [[ ! -f "$GRPO_REWARD_FUNC" ]]; then
+  echo "Missing reward function: $GRPO_REWARD_FUNC" >&2
+  exit 1
+fi
+
+case "$GRPO_PROMPT_DATA" in
+  /*) ;;
+  *) GRPO_PROMPT_DATA="$REPO_ROOT/$GRPO_PROMPT_DATA" ;;
+esac
+
+case "$GRPO_REWARD_FUNC" in
+  /*) ;;
+  *) GRPO_REWARD_FUNC="$REPO_ROOT/$GRPO_REWARD_FUNC" ;;
+esac
+
+if [[ -f "$GRPO_EVAL_DATA" ]]; then
+  case "$GRPO_EVAL_DATA" in
+    /*) ;;
+    *) GRPO_EVAL_DATA="$REPO_ROOT/$GRPO_EVAL_DATA" ;;
+  esac
+  EVAL_ARGS=(--eval.dataset "$GRPO_EVAL_DATA" --eval.steps "$GRPO_EVAL_STEPS")
+else
+  echo "Warning: eval dataset not found, skipping OpenRLHF eval hook: $GRPO_EVAL_DATA" >&2
+  EVAL_ARGS=()
+fi
+
+KL_ARGS=(--algo.kl.estimator "$GRPO_KL_ESTIMATOR")
+if [[ "$GRPO_USE_KL_LOSS" == "1" ]]; then
+  KL_ARGS+=(--algo.kl.use_loss)
+fi
+
+if [[ "${START_RAY:-0}" == "1" ]]; then
+  ray start --head --node-ip-address 0.0.0.0 --num-gpus "$GRPO_GPUS_PER_NODE"
+fi
+
+ray job submit --address="$RAY_ADDRESS" \
+  --runtime-env-json="{\"working_dir\":\"$REPO_ROOT\"}" \
+  -- python3 -m openrlhf.cli.train_ppo_ray \
+  --ref.num_nodes 1 \
+  --ref.num_gpus_per_node "$GRPO_GPUS_PER_NODE" \
+  --actor.num_nodes 1 \
+  --actor.num_gpus_per_node "$GRPO_GPUS_PER_NODE" \
+  --vllm.num_engines "$GRPO_VLLM_ENGINES" \
+  --vllm.tensor_parallel_size "$GRPO_VLLM_TP" \
+  --train.colocate_actor_ref \
+  --actor.model_name_or_path "$GRPO_ACTOR_MODEL" \
+  --reward.remote_url "$GRPO_REWARD_FUNC" \
+  --ckpt.output_dir "$GRPO_OUTPUT_DIR" \
+  --ckpt.path "$GRPO_CKPT_DIR" \
+  --ckpt.save_hf \
+  "${EVAL_ARGS[@]}" \
+  --train.batch_size "$GRPO_TRAIN_BATCH_SIZE" \
+  --rollout.batch_size "$GRPO_ROLLOUT_BATCH_SIZE" \
+  --rollout.n_samples_per_prompt "$GRPO_N_SAMPLES_PER_PROMPT" \
+  --train.max_epochs "$GRPO_MAX_EPOCHS" \
+  --data.max_len "$GRPO_MAX_LEN" \
+  --data.max_samples "$GRPO_MAX_SAMPLES" \
+  --ds.zero_stage 3 \
+  --ds.param_dtype bf16 \
+  --actor.adam.lr "$GRPO_ACTOR_LR" \
+  --algo.kl.init_coef "$GRPO_INIT_KL_COEF" \
+  "${KL_ARGS[@]}" \
+  --algo.advantage.estimator group_norm \
+  --data.prompt_dataset "$GRPO_PROMPT_DATA" \
+  --data.input_key prompt \
+  --data.label_key label \
+  --actor.gradient_checkpointing_enable \
+  --ds.packing_samples \
+  --vllm.sync_backend nccl \
+  --vllm.enforce_eager \
+  --train.dynamic_batch_enable
