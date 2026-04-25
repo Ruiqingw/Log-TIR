@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+data/
+logs/
+remote-logs/
+
+toy.sqlite
+spider_gold_failures.json

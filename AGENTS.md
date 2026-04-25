@@ -1,0 +1,137 @@
+# AGENTS.md
+
+## Project
+
+- Repo: `Log-TIR`
+- Goal: build a fully local Text-to-SQL self-correction agent with GRPO on top of `Qwen2.5-Coder-3B-Instruct`
+- Primary benchmark: Spider
+- Secondary transfer benchmark: BIRD
+- Intended outcome: a strong resume-grade LLM/agent/RL systems project for algorithm internship applications
+
+## Core Thesis
+
+- The agent should read a natural-language question, generate SQL, execute it in a sandbox, read traceback or empty-result feedback, and retry.
+- The project must stay fully local and avoid external inference APIs during training and evaluation.
+- Reward shaping is staged as `format -> no-error -> exec-match`, with `exec-match` dominating.
+- A short SFT cold start is required before GRPO. Direct GRPO from the base model is expected to stall.
+
+## Training Defaults
+
+- Reward weights: `format = 0.1`, `no-error = 0.2`, `exec-match = 1.0`
+- SFT cold start target: `2000` formatted trajectories with `<thought>` and `<action>`
+- GRPO group size: `G = 4-8`
+- Self-correction budget: at most `2` turns per episode
+- Primary base model: `Qwen2.5-Coder-3B-Instruct`
+
+## Day 1 Plan
+
+Deliverables:
+
+1. Download and unpack Spider with executable SQLite databases.
+2. Implement `sandbox.py` with read-only SQLite access, subprocess isolation, and a 3 second timeout.
+3. Implement `eval.py` for execution-match evaluation.
+4. Validate the evaluator by running Spider dev gold SQL and target `>=95%` execution accuracy.
+
+Suggested order:
+
+1. Set up `data/spider/`.
+2. Write the SQL runner and normalization helpers.
+3. Run a small gold-SQL smoke test.
+4. Run full Spider dev evaluation and inspect failures.
+
+## How To Run
+
+Spider evaluator:
+
+```bash
+python3 eval.py --spider-root data/spider --use-gold-predictions --limit 100
+python3 eval.py --spider-root data/spider --use-gold-predictions --failures-out spider_gold_failures.json
+```
+
+Direct sandbox smoke tests:
+
+```bash
+python3 sandbox.py --db path/to/db.sqlite --sql "select count(*) from some_table"
+python3 sandbox.py --db path/to/db.sqlite --sql "drop table some_table"
+```
+
+## Repository Layout Target
+
+Expected layout:
+
+```text
+Log-TIR/
+├── AGENTS.md
+├── CLAUDE.md
+├── data/
+│   ├── spider/
+│   └── bird/
+├── logs/
+├── remote-logs/
+├── sandbox.py
+├── eval.py
+└── ...
+```
+
+Training logs should follow:
+
+```text
+logs/
+├── run_YYYYMMDD_HHMM/
+│   ├── config.json
+│   ├── metrics.jsonl
+│   ├── trajectories.jsonl
+│   ├── train.stdout.log
+│   └── train.stderr.log
+└── latest -> run_YYYYMMDD_HHMM
+```
+
+## Evaluation Rules
+
+- Main metric: execution match on Spider and BIRD.
+- Normalize execution outputs so numeric and string formatting noise does not dominate reward.
+- Preserve row order for `ORDER BY` queries; otherwise compare as multisets.
+- Do not trust model-side metrics until the gold SQL baseline is validated on the dev split.
+
+## Testing Strategy
+
+- Keep `tests/` focused on small SQLite fixtures built at test time.
+- `sandbox.py` must be covered for timeout handling, syntax errors, read-only rejection, and valid read-only queries.
+- `eval.py` must be covered for `ORDER BY` sensitivity, numeric normalization, and Spider-style dataset evaluation on a tiny synthetic fixture.
+- Before changing reward logic or rollout formatting, re-run the Spider gold-SQL evaluator and `pytest`.
+
+## Engineering Rules
+
+- Keep reward functions pure and unit-testable.
+- Create the run directory, update `logs/latest`, dump config, and initialize tracking at the start of every training run.
+- `config.json` should capture hyperparameters, git commit and branch and dirty flag and diff, hostname, python and torch and cuda versions, GPU type, and launch command.
+- Store logs as JSONL rather than large free-form text files.
+
+## Infrastructure Notes
+
+- Preferred training stack: `OpenRLHF` + Ray
+- Main training machine: domestic server
+- Backup compute: vast.ai
+- Mac is the control plane and should pull logs from the server instead of relying on reverse sync
+
+## Constraints
+
+- Do not revive the synthetic Gemini-style personal-log dataset as the main training source.
+- Do not treat a weak evaluator as ground truth; evaluator validation is a hard gate.
+- Do not over-reward trivial no-error outputs such as `SELECT 1`.
+
+## Resume-Level Claims To Preserve
+
+- Zero-API local sandbox execution for scalable rollouts
+- Multi-stage reward shaping to reduce sparse-reward collapse
+- Multi-turn self-correction using traceback feedback
+
+## Continuation Checklist
+
+When resuming later:
+
+1. Read `AGENTS.md`.
+2. Inspect the repo tree and current missing pieces.
+3. Check recent git history if git is initialized.
+4. Verify whether Spider data is already present.
+5. Re-run the Spider gold-SQL evaluator before changing reward logic.
