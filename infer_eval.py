@@ -138,6 +138,12 @@ def generate_responses_vllm(
     max_model_len: int | None,
 ) -> list[str]:
     from vllm import LLM, SamplingParams
+    from transformers import PreTrainedTokenizerBase
+
+    if not hasattr(PreTrainedTokenizerBase, "all_special_tokens_extended"):
+        PreTrainedTokenizerBase.all_special_tokens_extended = property(
+            lambda self: self.all_special_tokens
+        )
 
     llm_kwargs: dict[str, Any] = {
         "model": model_name_or_path,

@@ -4,7 +4,7 @@ import json
 import os
 from typing import Any
 
-from openrlhf_reward import _db_path_from_label, score_response
+from openrlhf_reward import _db_path_from_label, _extra_logs_from_score, score_response
 from sandbox import execute_sql
 from sft_data import parse_tagged_response
 
@@ -89,10 +89,13 @@ class AgentInstance(AgentInstanceBase):
         self.step_idx = 0
         self.max_turns = int(os.environ.get("LOGTIR_AGENT_MAX_TURNS", "2"))
         self.timeout_s = float(os.environ.get("LOGTIR_AGENT_TIMEOUT", "3.0"))
+        self.turn_penalty = float(os.environ.get("LOGTIR_AGENT_TURN_PENALTY", "0.05"))
+        self.turn1_exec_match = False
 
     async def reset(self, states: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         del kwargs
         self.step_idx = 0
+        self.turn1_exec_match = False
         observation = states.get("observation") or states.get("prompt") or ""
         return {"observation": observation}
 
@@ -102,9 +105,14 @@ class AgentInstance(AgentInstanceBase):
         label = _label_from_states(states)
         action_text = states.get("action_text") or states.get("response") or ""
         score = score_response(action_text, label, timeout_s=self.timeout_s)
+        if self.step_idx == 1:
+            self.turn1_exec_match = bool(score["exec_match"])
         done = bool(score["exec_match"]) or self.step_idx >= self.max_turns
 
-        reward_value = float(score["reward"]) if done else 0.0
+        raw_reward = float(score["reward"])
+        reward_value = raw_reward if done else 0.0
+        if done:
+            reward_value = max(0.0, reward_value - self.turn_penalty * (self.step_idx - 1))
         reward = _tensor(reward_value)
         feedback = ""
         if not done:
@@ -115,24 +123,33 @@ class AgentInstance(AgentInstanceBase):
                 timeout_s=self.timeout_s,
             ) + "\n\n"
 
+        extra_logs = _extra_logs_from_score(action_text, score)
+        extra_logs.update(
+            {
+                "turn": float(self.step_idx),
+                "terminal_rate": float(done),
+                "avg_turns_used": float(self.step_idx),
+                "turn1_exec_match_rate": float(self.step_idx == 1 and score["exec_match"]),
+                "turn2_exec_match_rate": float(self.step_idx == 2 and score["exec_match"]),
+                "self_correction_rate": float(
+                    self.step_idx > 1 and (not self.turn1_exec_match) and score["exec_match"]
+                ),
+                "raw_reward": raw_reward,
+                "turn_penalty": raw_reward - reward_value if done else 0.0,
+                "reward": reward_value,
+            }
+        )
+
         return {
             "rewards": reward,
             "scores": reward,
             "environment_feedback": feedback,
             "done": done,
             "sampling_params": states.get("sampling_params", None),
-            "extra_logs": {
-                "turn": self.step_idx,
-                "terminal": float(done),
-                "format_match": float(score["format_match"]),
-                "no_error": float(score["no_error"]),
-                "exec_match": float(score["exec_match"]),
-                "reward": _as_float(reward),
-            },
+            "extra_logs": extra_logs,
         }
 
 
 class AgentExecutor(MultiTurnAgentExecutor):
     def __init__(self) -> None:
         super().__init__(AgentInstance)
-

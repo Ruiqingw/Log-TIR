@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from openrlhf_reward import score_response
+from openrlhf_reward import reward_func, score_response
 
 
 def _build_db(path: Path) -> None:
@@ -34,6 +34,7 @@ def test_score_response_rewards_exec_match(tmp_path: Path) -> None:
     assert result["no_error"] is True
     assert result["exec_match"] is True
     assert result["reward"] == 1.3
+    assert result["error_category"] == ""
 
 
 def test_score_response_rewards_no_error_without_exec_match(tmp_path: Path) -> None:
@@ -49,12 +50,15 @@ def test_score_response_rewards_no_error_without_exec_match(tmp_path: Path) -> N
     assert result["no_error"] is True
     assert result["exec_match"] is False
     assert result["reward"] == pytest.approx(0.3)
+    assert result["wrong_result"] is True
+    assert result["error_category"] == "wrong_result"
 
 
 def test_score_response_format_failure_gets_zero() -> None:
     result = score_response("SELECT 1", {"db_path": "missing.sqlite", "gold_sql": "SELECT 1"})
     assert result["reward"] == 0.0
     assert result["format_match"] is False
+    assert result["error_category"] == "format"
 
 
 def test_score_response_accepts_json_label(tmp_path: Path) -> None:
@@ -111,3 +115,22 @@ def test_score_response_caches_gold_sql_execution(tmp_path: Path, monkeypatch) -
     score_response(response, label)
     score_response(response, label)
     assert calls == 3
+
+
+def test_reward_func_returns_openrlhf_reward_payload(tmp_path: Path) -> None:
+    db_path = tmp_path / "toy.sqlite"
+    _build_db(db_path)
+    prompt = "Question prompt"
+    response = (
+        "<thought>Read schema and answer.</thought>\n"
+        "<action>SELECT count(*) FROM items</action>"
+    )
+    label = json.dumps({"db_path": str(db_path), "gold_sql": "SELECT count(*) FROM items"})
+
+    result = reward_func([prompt + response], [prompt], [label])
+
+    assert result["rewards"] == pytest.approx(1.3)
+    assert result["scores"] == pytest.approx(1.3)
+    assert result["extra_logs"]["format_match_rate"] == 1.0
+    assert result["extra_logs"]["exec_match_rate"] == 1.0
+    assert result["extra_logs"]["avg_action_sql_length"] > 0

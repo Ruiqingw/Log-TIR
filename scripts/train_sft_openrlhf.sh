@@ -13,11 +13,12 @@ fi
 MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-Qwen/Qwen2.5-Coder-3B-Instruct}"
 SFT_DATA="${SFT_DATA:-data/sft/spider_sft_2000.jsonl}"
 SFT_OUTPUT_DIR="${SFT_OUTPUT_DIR:-checkpoints/qwen2.5-coder-3b-logtir-sft}"
-SFT_MAX_LEN="${SFT_MAX_LEN:-4096}"
+SFT_MAX_LEN="${SFT_MAX_LEN:-2048}"
 SFT_BATCH_SIZE="${SFT_BATCH_SIZE:-64}"
 SFT_MICRO_BATCH_SIZE="${SFT_MICRO_BATCH_SIZE:-1}"
 SFT_MAX_EPOCHS="${SFT_MAX_EPOCHS:-1}"
 SFT_LR="${SFT_LR:-5e-6}"
+SFT_PACKING_SAMPLES="${SFT_PACKING_SAMPLES:-1}"
 LOGTIR_ENABLE_RUN_LOGS="${LOGTIR_ENABLE_RUN_LOGS:-1}"
 
 if [[ "$LOGTIR_ENABLE_RUN_LOGS" == "1" ]]; then
@@ -30,13 +31,16 @@ if [[ "$LOGTIR_ENABLE_RUN_LOGS" == "1" ]]; then
   echo "Log-TIR run dir: $LOGTIR_RUN_DIR"
 fi
 
-WANDB_ARGS=()
+DEEPSPEED_EXTRA_ARGS=()
 if [[ "${LOGTIR_WANDB:-0}" == "1" ]]; then
   if [[ -z "${WANDB_API_KEY:-}" ]]; then
     echo "LOGTIR_WANDB=1 requires WANDB_API_KEY" >&2
     exit 1
   fi
-  WANDB_ARGS=(--use_wandb "$WANDB_API_KEY")
+  DEEPSPEED_EXTRA_ARGS=(--logger.wandb.key "$WANDB_API_KEY")
+fi
+if [[ "$SFT_PACKING_SAMPLES" == "1" ]]; then
+  DEEPSPEED_EXTRA_ARGS+=(--ds.packing_samples)
 fi
 
 if [[ ! -f "$SFT_DATA" ]]; then
@@ -45,7 +49,8 @@ if [[ ! -f "$SFT_DATA" ]]; then
   exit 1
 fi
 
-deepspeed --module openrlhf.cli.train_sft \
+run_deepspeed() {
+  deepspeed --module openrlhf.cli.train_sft \
   --data.max_len "$SFT_MAX_LEN" \
   --data.dataset "$SFT_DATA" \
   --data.input_key prompt \
@@ -64,6 +69,12 @@ deepspeed --module openrlhf.cli.train_sft \
   --ds.attn_implementation flash_attention_2 \
   --adam.lr "$SFT_LR" \
   --ckpt.load_enable \
-  --ds.packing_samples \
   --model.gradient_checkpointing_enable \
-  "${WANDB_ARGS[@]}"
+  "$@"
+}
+
+if ((${#DEEPSPEED_EXTRA_ARGS[@]})); then
+  run_deepspeed "${DEEPSPEED_EXTRA_ARGS[@]}"
+else
+  run_deepspeed
+fi

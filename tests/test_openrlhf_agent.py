@@ -49,6 +49,7 @@ def test_agent_returns_feedback_after_first_sql_error(tmp_path: Path, monkeypatc
     assert _value(result["rewards"]) == 0.0
     assert "Execution feedback" in result["environment_feedback"]
     assert "no such table" in result["environment_feedback"]
+    assert result["extra_logs"]["err_schema_hallucination_rate"] == 1.0
 
 
 def test_agent_terminates_with_reward_on_second_correct_turn(
@@ -85,8 +86,10 @@ def test_agent_terminates_with_reward_on_second_correct_turn(
     first, second = asyncio.run(run())
     assert first["done"] is False
     assert second["done"] is True
-    assert _value(second["rewards"]) == pytest.approx(1.3)
+    assert _value(second["rewards"]) == pytest.approx(1.25)
     assert second["environment_feedback"] == ""
+    assert second["extra_logs"]["turn2_exec_match_rate"] == 1.0
+    assert second["extra_logs"]["self_correction_rate"] == 1.0
 
 
 def test_agent_terminal_wrong_second_turn_gets_shaped_reward(
@@ -121,4 +124,5 @@ def test_agent_terminal_wrong_second_turn_gets_shaped_reward(
 
     result = asyncio.run(run())
     assert result["done"] is True
-    assert _value(result["rewards"]) == pytest.approx(0.3)
+    assert _value(result["rewards"]) == pytest.approx(0.25)
+    assert result["extra_logs"]["err_wrong_result_rate"] == 1.0

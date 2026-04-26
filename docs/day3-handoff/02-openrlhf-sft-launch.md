@@ -58,7 +58,7 @@ OpenRLHF SFT 脚本只用两个字段：
 MODEL_NAME_OR_PATH=Qwen/Qwen2.5-Coder-3B-Instruct
 SFT_DATA=data/sft/spider_sft_2000.jsonl
 SFT_OUTPUT_DIR=checkpoints/qwen2.5-coder-3b-logtir-sft
-SFT_MAX_LEN=4096
+SFT_MAX_LEN=2048
 SFT_BATCH_SIZE=64
 SFT_MICRO_BATCH_SIZE=1
 SFT_MAX_EPOCHS=1
@@ -115,4 +115,3 @@ bash scripts/train_sft_openrlhf.sh
 - 先减小 `SFT_BATCH_SIZE`。
 - 保持 `SFT_MICRO_BATCH_SIZE=1`。
 - 保持 gradient checkpointing 开启。
-

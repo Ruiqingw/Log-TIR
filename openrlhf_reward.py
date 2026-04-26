@@ -55,6 +55,48 @@ def _execution_match_from_results(
     return pred_rows == gold_rows
 
 
+def _classify_error(error: str) -> str:
+    lowered = error.lower()
+    if not error:
+        return ""
+    if "no such column" in lowered or "no such table" in lowered:
+        return "schema_hallucination"
+    if "syntax error" in lowered:
+        return "syntax"
+    if "permissionerror" in lowered or "read-only" in lowered or "not read-only" in lowered:
+        return "unsafe_sql"
+    if "timeout" in lowered or "timed out" in lowered:
+        return "timeout"
+    return "execution"
+
+
+def _action_sql_from_response(response: str) -> str:
+    try:
+        return parse_tagged_response(response)["action"]
+    except ValueError:
+        return ""
+
+
+def _extra_logs_from_score(response: str, score: dict[str, Any]) -> dict[str, float]:
+    action_sql = str(score.get("action_sql") or _action_sql_from_response(response))
+    error_category = str(score.get("error_category") or "")
+    reward = float(score["reward"])
+    return {
+        "format_match_rate": float(score["format_match"]),
+        "no_error_rate": float(score["no_error"]),
+        "exec_match_rate": float(score["exec_match"]),
+        "format_only_reward_share": float(
+            score["format_match"] and not score["no_error"] and reward == FORMAT_REWARD
+        ),
+        "err_schema_hallucination_rate": float(error_category == "schema_hallucination"),
+        "err_syntax_rate": float(error_category == "syntax"),
+        "err_empty_result_rate": float(score.get("empty_result", False)),
+        "err_wrong_result_rate": float(score.get("wrong_result", False)),
+        "response_length_chars": float(len(response)),
+        "avg_action_sql_length": float(len(action_sql)),
+    }
+
+
 def score_response(response: str, label: str | dict[str, Any], timeout_s: float = 3.0) -> dict[str, Any]:
     parsed_label = json.loads(label) if isinstance(label, str) else label
     reward = 0.0
@@ -63,26 +105,34 @@ def score_response(response: str, label: str | dict[str, Any], timeout_s: float 
         "no_error": False,
         "exec_match": False,
         "error": "",
+        "error_category": "",
+        "action_sql": "",
+        "empty_result": False,
+        "wrong_result": False,
     }
 
     try:
         parsed = parse_tagged_response(response)
     except ValueError as exc:
         details["error"] = f"format: {exc}"
+        details["error_category"] = "format"
         return {"reward": reward, **details}
 
     reward += FORMAT_REWARD
     details["format_match"] = True
     action_sql = parsed["action"]
+    details["action_sql"] = action_sql
     db_path = _db_path_from_label(parsed_label)
 
     execution = execute_sql(db_path, action_sql, timeout_s=timeout_s)
     if not execution.get("ok"):
         details["error"] = execution.get("error", "")
+        details["error_category"] = _classify_error(details["error"])
         return {"reward": reward, **details}
 
     reward += NO_ERROR_REWARD
     details["no_error"] = True
+    details["empty_result"] = not bool(execution.get("rows", []))
 
     gold_result = json.loads(
         _execute_gold_sql_cached(str(db_path), parsed_label["gold_sql"], timeout_s)
@@ -97,15 +147,26 @@ def score_response(response: str, label: str | dict[str, Any], timeout_s: float 
         details["exec_match"] = True
     else:
         details["error"] = execution.get("error") or gold_result.get("error", "")
+        details["wrong_result"] = True
+        details["error_category"] = "empty_result" if details["empty_result"] else "wrong_result"
 
     return {"reward": reward, **details}
 
 
 def reward_func(queries, prompts, labels):  # type: ignore[no-untyped-def]
-    import torch
-
-    scores = []
+    payloads = []
     for query, prompt, label in zip(queries, prompts, labels):
         response = _response_from_query(query, prompt)
-        scores.append(score_response(response, label)["reward"])
-    return torch.tensor(scores, dtype=torch.float32)
+        score = score_response(response, label)
+        reward = float(score["reward"])
+        payloads.append(
+            {
+                "rewards": reward,
+                "scores": reward,
+                "extra_logs": _extra_logs_from_score(response, score),
+            }
+        )
+
+    if len(payloads) == 1:
+        return payloads[0]
+    return payloads
