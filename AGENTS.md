@@ -107,6 +107,12 @@ LOGTIR_WANDB=1 WANDB_API_KEY=... bash scripts/train_sft_openrlhf.sh
 scripts/sync_logs.sh user@your.server:~/Log-TIR/logs remote-logs
 ```
 
+Wandb preflight:
+
+- Before every SFT or GRPO training run that enables wandb, test wandb connectivity first and record the result in the run log.
+- Prefer `WANDB_MODE=offline` for long domestic-server GRPO runs unless the preflight proves online wandb is stable; wandb init timeouts must not be allowed to kill Ray actors mid-launch.
+- `scripts/train_grpo_openrlhf.sh` performs this preflight by default when `LOGTIR_WANDB=1`; set `LOGTIR_WANDB_PREFLIGHT_STRICT=1` only when training should fail instead of falling back from an unhealthy wandb connection.
+
 Direct sandbox smoke tests:
 
 ```bash

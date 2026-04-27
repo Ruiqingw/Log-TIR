@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openrlhf_reward import _db_path_from_label, score_response
 from sandbox import execute_sql

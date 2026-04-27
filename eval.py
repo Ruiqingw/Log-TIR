@@ -56,7 +56,7 @@ def _normalize_cell(value: Any) -> Any:
         return ("str", value.decode("utf-8", errors="replace").strip())
     if isinstance(value, bool):
         return ("bool", value)
-    if isinstance(value, int | float):
+    if isinstance(value, (int, float)):
         return ("number", round(float(value), 8))
     if isinstance(value, str):
         return ("str", value.strip())

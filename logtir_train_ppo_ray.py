@@ -16,10 +16,17 @@ def _patch_ray_init() -> None:
 
     def init_with_logtir_defaults(*args, **kwargs):
         kwargs.setdefault("include_dashboard", False)
+        kwargs.setdefault("address", "local")
         if "num_cpus" not in kwargs and os.environ.get("LOGTIR_RAY_NUM_CPUS"):
             kwargs["num_cpus"] = int(os.environ["LOGTIR_RAY_NUM_CPUS"])
         if "num_gpus" not in kwargs and os.environ.get("LOGTIR_RAY_NUM_GPUS"):
             kwargs["num_gpus"] = int(os.environ["LOGTIR_RAY_NUM_GPUS"])
+        if (
+            "_temp_dir" not in kwargs
+            and "address" not in kwargs
+            and os.environ.get("RAY_TMPDIR")
+        ):
+            kwargs["_temp_dir"] = os.environ["RAY_TMPDIR"]
         return original_init(*args, **kwargs)
 
     ray.init = init_with_logtir_defaults

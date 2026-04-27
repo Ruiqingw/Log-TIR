@@ -6,6 +6,10 @@ __pycache__/
 data/
 logs/
 remote-logs/
+checkpoints/
+models/
+ray_tmp/
+wandb/
 configs/openrlhf_day3.env
 
 toy.sqlite

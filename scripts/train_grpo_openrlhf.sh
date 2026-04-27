@@ -30,7 +30,7 @@ GRPO_VLLM_ENFORCE_EAGER="${GRPO_VLLM_ENFORCE_EAGER:-0}"
 GRPO_VLLM_ENABLE_SLEEP="${GRPO_VLLM_ENABLE_SLEEP:-0}"
 GRPO_VLLM_GPU_MEMORY_UTILIZATION="${GRPO_VLLM_GPU_MEMORY_UTILIZATION:-}"
 GRPO_COLOCATE_ALL="${GRPO_COLOCATE_ALL:-0}"
-GRPO_TRAIN_BATCH_SIZE="${GRPO_TRAIN_BATCH_SIZE:-32}"
+GRPO_TRAIN_BATCH_SIZE="${GRPO_TRAIN_BATCH_SIZE:-30}"
 GRPO_ROLLOUT_BATCH_SIZE="${GRPO_ROLLOUT_BATCH_SIZE:-32}"
 GRPO_N_SAMPLES_PER_PROMPT="${GRPO_N_SAMPLES_PER_PROMPT:-4}"
 GRPO_MAX_NEW_TOKENS="${GRPO_MAX_NEW_TOKENS:-}"
@@ -40,6 +40,7 @@ GRPO_MAX_SAMPLES="${GRPO_MAX_SAMPLES:-2000}"
 GRPO_MAX_LEN="${GRPO_MAX_LEN:-4096}"
 GRPO_PACKING_SAMPLES="${GRPO_PACKING_SAMPLES:-1}"
 GRPO_ACTOR_LR="${GRPO_ACTOR_LR:-5e-7}"
+GRPO_ACTOR_ENTROPY_COEF="${GRPO_ACTOR_ENTROPY_COEF:-}"
 GRPO_INIT_KL_COEF="${GRPO_INIT_KL_COEF:-0.01}"
 GRPO_USE_KL_LOSS="${GRPO_USE_KL_LOSS:-1}"
 GRPO_KL_ESTIMATOR="${GRPO_KL_ESTIMATOR:-k3}"
@@ -51,6 +52,13 @@ GRPO_USE_RAY_JOB="${GRPO_USE_RAY_JOB:-0}"
 LOGTIR_RAY_TMPDIR="${LOGTIR_RAY_TMPDIR:-/Work21/2024/luyuheng/ray}"
 LOGTIR_RAY_NUM_CPUS="${LOGTIR_RAY_NUM_CPUS:-8}"
 LOGTIR_ENABLE_RUN_LOGS="${LOGTIR_ENABLE_RUN_LOGS:-1}"
+LOGTIR_WANDB_PREFLIGHT="${LOGTIR_WANDB_PREFLIGHT:-1}"
+LOGTIR_WANDB_PREFLIGHT_TIMEOUT="${LOGTIR_WANDB_PREFLIGHT_TIMEOUT:-30}"
+LOGTIR_WANDB_PREFLIGHT_STRICT="${LOGTIR_WANDB_PREFLIGHT_STRICT:-0}"
+
+if [[ "$GRPO_USE_RAY_JOB" != "1" ]]; then
+  unset RAY_ADDRESS
+fi
 
 case "$LOGTIR_RAY_TMPDIR" in
   /*) ;;
@@ -70,7 +78,7 @@ if [[ "$LOGTIR_ENABLE_RUN_LOGS" == "1" ]]; then
   export LOGTIR_RUN_DIR
   if [[ "${LOGTIR_LOG_REDIRECTED:-0}" != "1" ]]; then
     export LOGTIR_LOG_REDIRECTED=1
-    exec > >(tee -a "$LOGTIR_RUN_DIR/train.stdout.log") 2> >(tee -a "$LOGTIR_RUN_DIR/train.stderr.log" >&2)
+    exec > >(tee -a "$LOGTIR_RUN_DIR/train.stdout.log" >(python3 scripts/parse_stdout_metrics.py >> "$LOGTIR_RUN_DIR/metrics.jsonl")) 2> >(tee -a "$LOGTIR_RUN_DIR/train.stderr.log" >&2)
   fi
   echo "Log-TIR run dir: $LOGTIR_RUN_DIR"
 fi
@@ -78,7 +86,10 @@ fi
 WANDB_ARGS=()
 if [[ "${LOGTIR_WANDB:-0}" == "1" ]]; then
   if [[ -z "${WANDB_API_KEY:-}" ]]; then
-    WANDB_API_KEY="$(conda run -n logtir python -c 'import wandb; print(wandb.api.api_key or "")' 2>/dev/null | tail -n 1)"
+    WANDB_API_KEY="$(python3 -c 'import wandb; print(wandb.api.api_key or "")' 2>/dev/null || true)"
+  fi
+  if [[ -z "${WANDB_API_KEY:-}" ]]; then
+    WANDB_API_KEY="$(conda run -n logtir python -c 'import wandb; print(wandb.api.api_key or "")' 2>/dev/null | tail -n 1 || true)"
   fi
   if [[ -z "${WANDB_API_KEY:-}" ]]; then
     WANDB_API_KEY="$(python3 -c 'import netrc; auth = netrc.netrc().authenticators("api.wandb.ai"); print(auth[2] if auth else "")' 2>/dev/null || true)"
@@ -88,6 +99,47 @@ if [[ "${LOGTIR_WANDB:-0}" == "1" ]]; then
     exit 1
   fi
   export WANDB_API_KEY
+  if [[ "$LOGTIR_WANDB_PREFLIGHT" == "1" ]]; then
+    echo "Running wandb preflight: mode=${WANDB_MODE:-online}, timeout=${LOGTIR_WANDB_PREFLIGHT_TIMEOUT}s"
+    set +e
+timeout "$LOGTIR_WANDB_PREFLIGHT_TIMEOUT" python3 - <<'PY'
+import json
+import os
+import sys
+import urllib.request
+
+key = os.environ.get("WANDB_API_KEY", "")
+payload = json.dumps({"query": "query Viewer { viewer { id entity } }"}).encode("utf-8")
+request = urllib.request.Request(
+    "https://api.wandb.ai/graphql",
+    data=payload,
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+if key:
+    request.add_header("Authorization", f"Bearer {key}")
+try:
+    with urllib.request.urlopen(request, timeout=10) as response:
+        print(f"wandb preflight ok: api.wandb.ai returned HTTP {response.status}")
+except Exception as exc:
+    print(f"wandb preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+    WANDB_PREFLIGHT_RC=$?
+    set -e
+    if [[ "$WANDB_PREFLIGHT_RC" != "0" ]]; then
+      if [[ "$LOGTIR_WANDB_PREFLIGHT_STRICT" == "1" ]]; then
+        echo "wandb preflight failed and LOGTIR_WANDB_PREFLIGHT_STRICT=1" >&2
+        exit "$WANDB_PREFLIGHT_RC"
+      fi
+      if [[ "${WANDB_MODE:-}" == "offline" ]]; then
+        echo "wandb preflight failed; continuing because WANDB_MODE=offline"
+      else
+        echo "wandb preflight failed; disabling wandb for this run to avoid launch-time timeout" >&2
+        LOGTIR_WANDB=0
+      fi
+    fi
+  fi
   WANDB_ARGS=(
     --logger.wandb.key env
     --logger.wandb.project "${WANDB_PROJECT:-log-tir}"
@@ -186,6 +238,9 @@ GRPO_COMMAND=(
   --data.label_key label \
   --actor.gradient_checkpointing_enable
 )
+if [[ -n "$GRPO_ACTOR_ENTROPY_COEF" ]]; then
+  GRPO_COMMAND+=(--actor.entropy_coef "$GRPO_ACTOR_ENTROPY_COEF")
+fi
 if [[ -n "$GRPO_MAX_NEW_TOKENS" ]]; then
   GRPO_COMMAND+=(--rollout.max_new_tokens "$GRPO_MAX_NEW_TOKENS")
 fi

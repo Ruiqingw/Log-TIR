@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from openrlhf_reward import _db_path_from_label, _extra_logs_from_score, score_response
@@ -32,6 +33,37 @@ def _as_float(value: Any) -> float:
     if hasattr(value, "item"):
         return float(value.item())
     return float(value)
+
+
+TAGGED_RESPONSE_SEARCH = re.compile(
+    r"<thought>.*?</thought>\s*<action>.*?</action>",
+    re.DOTALL,
+)
+
+
+def _response_from_action_text(action_text: str, states: dict[str, Any]) -> str:
+    response = action_text.strip()
+    for key in ("observation_text", "observation", "prompt"):
+        prefix = states.get(key)
+        if isinstance(prefix, str) and prefix and response.startswith(prefix):
+            response = response[len(prefix) :].strip()
+            break
+
+    try:
+        parse_tagged_response(response)
+        return response
+    except ValueError:
+        pass
+
+    matches = list(TAGGED_RESPONSE_SEARCH.finditer(response))
+    for match in reversed(matches):
+        candidate = match.group(0).strip()
+        try:
+            parse_tagged_response(candidate)
+        except ValueError:
+            continue
+        return candidate
+    return response
 
 
 def _label_from_states(states: dict[str, Any]) -> dict[str, Any]:
@@ -104,7 +136,8 @@ class AgentInstance(AgentInstanceBase):
         self.step_idx += 1
         label = _label_from_states(states)
         action_text = states.get("action_text") or states.get("response") or ""
-        score = score_response(action_text, label, timeout_s=self.timeout_s)
+        response = _response_from_action_text(str(action_text), states)
+        score = score_response(response, label, timeout_s=self.timeout_s)
         if self.step_idx == 1:
             self.turn1_exec_match = bool(score["exec_match"])
         done = bool(score["exec_match"]) or self.step_idx >= self.max_turns
@@ -117,13 +150,13 @@ class AgentInstance(AgentInstanceBase):
         feedback = ""
         if not done:
             feedback = "\n\n" + _feedback_from_score(
-                response=action_text,
+                response=response,
                 label=label,
                 score=score,
                 timeout_s=self.timeout_s,
             ) + "\n\n"
 
-        extra_logs = _extra_logs_from_score(action_text, score)
+        extra_logs = _extra_logs_from_score(response, score)
         extra_logs.update(
             {
                 "turn": float(self.step_idx),

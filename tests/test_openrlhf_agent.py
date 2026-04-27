@@ -52,6 +52,81 @@ def test_agent_returns_feedback_after_first_sql_error(tmp_path: Path, monkeypatc
     assert result["extra_logs"]["err_schema_hallucination_rate"] == 1.0
 
 
+def test_agent_strips_observation_prefix_before_scoring(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LOGTIR_AGENT_MAX_TURNS", "2")
+    db_path = tmp_path / "toy.sqlite"
+    _build_db(db_path)
+    label = {"db_path": str(db_path), "gold_sql": "SELECT count(*) FROM items"}
+    agent = AgentInstance()
+    observation = "Question prompt\n"
+    response = (
+        "<thought>Use existing table.</thought>\n"
+        "<action>SELECT count(*) FROM items</action>"
+    )
+
+    async def run() -> dict:
+        await agent.reset({"observation": observation})
+        return await agent.step(
+            {
+                "label": label,
+                "observation_text": observation,
+                "action_text": observation + response,
+            }
+        )
+
+    result = asyncio.run(run())
+    assert result["done"] is True
+    assert _value(result["rewards"]) == pytest.approx(1.3)
+    assert result["extra_logs"]["format_match_rate"] == 1.0
+    assert result["extra_logs"]["no_error_rate"] == 1.0
+    assert result["extra_logs"]["exec_match_rate"] == 1.0
+
+
+def test_agent_scores_latest_tagged_response_from_cumulative_text(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LOGTIR_AGENT_MAX_TURNS", "2")
+    db_path = tmp_path / "toy.sqlite"
+    _build_db(db_path)
+    label = {"db_path": str(db_path), "gold_sql": "SELECT count(*) FROM items"}
+    agent = AgentInstance()
+    observation = "Question prompt\n"
+    first_response = (
+        "<thought>Try missing table.</thought>\n"
+        "<action>SELECT count(*) FROM missing</action>"
+    )
+    second_response = (
+        "<thought>Use existing table.</thought>\n"
+        "<action>SELECT count(*) FROM items</action>"
+    )
+
+    async def run() -> dict:
+        await agent.reset({"observation": observation})
+        first = await agent.step(
+            {
+                "label": label,
+                "observation_text": observation,
+                "action_text": observation + first_response,
+            }
+        )
+        cumulative_observation = observation + first_response + first["environment_feedback"]
+        return await agent.step(
+            {
+                "label": label,
+                "observation_text": cumulative_observation,
+                "action_text": cumulative_observation + second_response,
+            }
+        )
+
+    result = asyncio.run(run())
+    assert result["done"] is True
+    assert _value(result["rewards"]) == pytest.approx(1.25)
+    assert result["extra_logs"]["turn2_exec_match_rate"] == 1.0
+    assert result["extra_logs"]["self_correction_rate"] == 1.0
+
+
 def test_agent_terminates_with_reward_on_second_correct_turn(
     tmp_path: Path, monkeypatch
 ) -> None:
