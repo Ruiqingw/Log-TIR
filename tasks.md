@@ -100,13 +100,17 @@ The summary JSON must include at least:
 - `total`
 - `matched`
 - `accuracy`
+- `accuracy_excluding_first_turn_timeout`
 - `turn1_matched`
 - `turn1_accuracy`
+- `turn1_accuracy_excluding_timeout`
 - `final_matched`
 - `final_accuracy`
+- `final_accuracy_excluding_first_turn_timeout`
 - `rescued_by_turn2`
 - `turn2_rescue_rate_all`
 - `turn2_rescue_rate_among_turn1_failures`
+- `turn2_rescue_rate_excluding_first_turn_timeout`
 - `timeout_first_turn`
 - `timeout_rescued_by_turn2`
 - `non_timeout_rescued_by_turn2`
@@ -132,11 +136,17 @@ Acceptance criteria:
 - Full Spider dev finishes for both `max_turns = 1` and `max_turns = 2`.
 - The two outputs use the same checkpoint, same data split, same decoding
   settings, and same SQL timeout.
-- The final report can state:
+- Timeout rescues must be reported separately and must not be counted as
+  evidence of semantic self-correction.
+- The final report must state both raw and timeout-excluded gains:
 
 ```text
-same-checkpoint multi-turn gain =
+same-checkpoint raw multi-turn gain =
 accuracy(max_turns=2) - accuracy(max_turns=1)
+
+same-checkpoint timeout-excluded multi-turn gain =
+accuracy_excluding_first_turn_timeout(max_turns=2)
+- accuracy_excluding_first_turn_timeout(max_turns=1)
 ```
 
 This is the key number for the self-correction claim.
