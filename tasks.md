@@ -155,9 +155,10 @@ Acceptance criteria:
 
 ## Task 3: BIRD Transfer Evaluation
 
-Run BIRD transfer after confirming the server has usable BIRD data. On the Mac
-control plane, `data/bird` exists, but the previous server run reported that the
-server path was missing.
+Run BIRD transfer after confirming the server has usable BIRD data. The dataset
+must exist on the server-local filesystem under `data/bird`; a Mac-only copy is
+not sufficient for server evaluation. On the Mac control plane, `data/bird`
+exists, but the previous server run reported that the server path was missing.
 
 First verify on the server:
 
@@ -166,7 +167,10 @@ test -e data/bird
 find data/bird -maxdepth 3 -type f | head
 ```
 
-If BIRD is missing on the server, sync or unpack it before evaluating.
+If BIRD is missing on the server, download it or sync the Mac copy to the
+server-local path `data/bird` before evaluating. Do not skip BIRD just because
+the path is missing; first attempt to make the dataset available locally on the
+server. Only record a missing-data caveat if download/sync/unpack is blocked.
 
 Evaluate SFT and multi-turn GRPO best150:
 
