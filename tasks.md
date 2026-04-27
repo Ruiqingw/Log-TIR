@@ -1,183 +1,174 @@
-# Log-TIR Next Tasks
+# Log-TIR Remaining Tasks
 
-This file is the handoff checklist for the server-side Codex run.
+This file is the current server-side Codex handoff. Completed tasks from the
+previous checklist have been collapsed into a short status summary. Execute the
+remaining tasks below in order.
 
-## Current Official State
+## Completed Status
 
-- Official SFT baseline on full Spider dev: `724 / 1034 = 0.7002`.
-- Official GRPO candidate on full Spider dev: `742 / 1034 = 0.7176`.
-- Absolute gain over SFT: `+1.74 pp`.
-- Selected checkpoint:
+Official Spider results already recorded in `docs/experiment-results.md`:
+
+- SFT baseline full Spider dev: `724 / 1034 = 70.02%`.
+- Multi-turn GRPO best checkpoint full Spider dev:
+  `742 / 1034 = 71.76%`.
+- Selected multi-turn GRPO checkpoint:
   `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf`.
-- Official GRPO eval artifact on the server:
-  `logs/infer_eval_spider_grpo_best150_dev.json`.
-- Local synced artifact path used by the Mac control plane:
-  `remote-logs/infer_eval_spider_grpo_best150_dev.json`.
-- Training internal eval selected step 150:
-  - step 50: `eval_spider_pass1 = 0.8892`
-  - step 100: `eval_spider_pass1 = 0.9210`
-  - step 150: `eval_spider_pass1 = 0.9315`, selected best
-  - step 200: `eval_spider_pass1 = 0.9204`, regressed
+- Same-checkpoint ablation on the selected multi-turn GRPO checkpoint:
+  - `max_turns=1`: `745 / 1034 = 72.05%`
+  - `max_turns=2`: `770 / 1034 = 74.47%`
+  - raw multi-turn gain: `+2.42 pp`
+  - timeout-excluded gain: about `+2.43 pp`
+  - turn-2 rescues: `25`
+  - timeout rescues: `0`
+  - non-timeout rescues: `13` wrong-result, `8` schema/hallucination,
+    `4` empty-result
 
-Do not continue training before the evaluation tasks below are done. The next
-priority is to prove where the GRPO gain comes from.
+This supports an inference-time self-correction claim for the selected
+checkpoint. It does not yet prove that multi-turn GRPO training is better than
+single-turn GRPO training. The next priority is the control run below.
 
-## Task 1: Rehydrate And Verify The Current Result
+## Task 1: Single-Turn GRPO Control Run
 
-On the server:
+Goal: test whether multi-turn GRPO training matters beyond ordinary single-turn
+GRPO reward optimization.
+
+Run a separate GRPO training job from the same SFT checkpoint with multi-turn
+disabled. Keep all other hyperparameters as close as possible to the successful
+multi-turn GRPO run.
+
+Do not overwrite the existing multi-turn checkpoint directories.
+
+Recommended launch:
 
 ```bash
 git pull
-jq '{dataset,total,matched,accuracy}' logs/infer_eval_spider_grpo_best150_dev.json
+
+export GRPO_MULTI_TURN=0
+export GRPO_ACTOR_MODEL=checkpoints/qwen2.5-coder-3b-logtir-sft
+export GRPO_OUTPUT_DIR=checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn
+export GRPO_CKPT_DIR=checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-ckpt
+export WANDB_RUN_NAME=grpo-singleturn-control
+
+START_RAY=1 bash scripts/train_grpo_openrlhf.sh
 ```
 
-Expected result:
+If the server uses a local `configs/openrlhf_day3.env`, keep that file's
+successful GPU, batch, max sample, timeout, wandb, and Ray settings. Override
+only the variables above unless there is a concrete launch error.
 
-```json
-{
-  "dataset": "spider",
-  "total": 1034,
-  "matched": 742,
-  "accuracy": 0.7176015473887815
-}
-```
+During training, track the same checkpoint-selection signal used for the
+multi-turn run:
 
-Also verify that the selected checkpoint exists:
+- `eval_spider_pass1` by global step
+- best global step
+- whether later steps regress
+- final selected checkpoint path
 
-```bash
-test -d checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf
-```
-
-Acceptance criteria:
-
-- The checkpoint directory exists.
-- The eval artifact reports `742 / 1034`.
-- `docs/experiment-results.md` matches the verified result.
-
-## Task 2: Same-Checkpoint Multi-Turn Ablation
-
-Goal: isolate the effect of self-correction without changing the model.
-
-Run the same checkpoint on the same Spider dev split under two settings:
-
-- `max_turns = 1`: first SQL only; no repair opportunity.
-- `max_turns = 2`: if turn 1 fails, feed execution feedback back to the model
-  and allow one repair attempt.
-
-If `infer_eval.py` does not support live multi-turn evaluation yet, extend it or
-create `multi_turn_infer_eval.py`. Reuse existing code instead of duplicating
-logic:
-
-- Prompt building and model generation from `infer_eval.py`.
-- Feedback prompt style from `agent_rollout.py`.
-- SQL scoring and error categorization from `openrlhf_reward.py`.
-- SQLite execution from `sandbox.py`.
-
-Required CLI shape:
-
-```bash
-python3 multi_turn_infer_eval.py \
-  --backend vllm \
-  --dataset spider \
-  --data-root data/spider \
-  --model checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf \
-  --max-turns 1 \
-  --output logs/infer_eval_spider_grpo_best150_dev_turn1.json \
-  --trajectories-out logs/trajectories_spider_grpo_best150_dev_turn1.jsonl
-
-python3 multi_turn_infer_eval.py \
-  --backend vllm \
-  --dataset spider \
-  --data-root data/spider \
-  --model checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf \
-  --max-turns 2 \
-  --output logs/infer_eval_spider_grpo_best150_dev_turn2.json \
-  --trajectories-out logs/trajectories_spider_grpo_best150_dev_turn2.jsonl
-```
-
-The summary JSON must include at least:
-
-- `total`
-- `matched`
-- `accuracy`
-- `accuracy_excluding_first_turn_timeout`
-- `turn1_matched`
-- `turn1_accuracy`
-- `turn1_accuracy_excluding_timeout`
-- `final_matched`
-- `final_accuracy`
-- `final_accuracy_excluding_first_turn_timeout`
-- `rescued_by_turn2`
-- `turn2_rescue_rate_all`
-- `turn2_rescue_rate_among_turn1_failures`
-- `turn2_rescue_rate_excluding_first_turn_timeout`
-- `timeout_first_turn`
-- `timeout_rescued_by_turn2`
-- `non_timeout_rescued_by_turn2`
-- `syntax_rescued_by_turn2`
-- `execution_error_rescued_by_turn2`
-- `wrong_result_rescued_by_turn2`
-
-Each trajectory JSONL row should include enough evidence for later analysis:
-
-- example id or index
-- `db_id`
-- question
-- gold SQL
-- per-turn model response
-- parsed SQL action
-- error category
-- raw execution error, if any
-- `exec_match`
-- whether turn 2 rescued a turn 1 failure
-
-Acceptance criteria:
-
-- Full Spider dev finishes for both `max_turns = 1` and `max_turns = 2`.
-- The two outputs use the same checkpoint, same data split, same decoding
-  settings, and same SQL timeout.
-- Timeout rescues must be reported separately and must not be counted as
-  evidence of semantic self-correction.
-- The final report must state both raw and timeout-excluded gains:
+Expected output naming:
 
 ```text
-same-checkpoint raw multi-turn gain =
-accuracy(max_turns=2) - accuracy(max_turns=1)
-
-same-checkpoint timeout-excluded multi-turn gain =
-accuracy_excluding_first_turn_timeout(max_turns=2)
-- accuracy_excluding_first_turn_timeout(max_turns=1)
+checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-ckpt/
+logs/infer_eval_spider_grpo_singleturn_best_dev.json
+logs/infer_eval_spider_grpo_singleturn_best_dev_turn1.json
+logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json
+logs/trajectories_spider_grpo_singleturn_best_dev_turn1.jsonl
+logs/trajectories_spider_grpo_singleturn_best_dev_turn2.jsonl
 ```
 
-This is the key number for the self-correction claim.
+After training, evaluate the best single-turn-GRPO checkpoint on full Spider dev:
 
-## Task 3: Timeout And Error Attribution
+```bash
+SINGLE_TURN_BEST=checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-ckpt/<best_step_hf>
 
-The current self-correction evidence may be inflated by timeout and formatting
-retries. Make the ablation report separate these categories.
+python3 infer_eval.py \
+  --backend vllm \
+  --dataset spider \
+  --data-root data/spider \
+  --model "$SINGLE_TURN_BEST" \
+  --output logs/infer_eval_spider_grpo_singleturn_best_dev.json
 
-Add or verify the following fields in the multi-turn eval summary:
+python3 multi_turn_infer_eval.py \
+  --backend vllm \
+  --dataset spider \
+  --data-root data/spider \
+  --model "$SINGLE_TURN_BEST" \
+  --max-turns 1 \
+  --output logs/infer_eval_spider_grpo_singleturn_best_dev_turn1.json \
+  --trajectories-out logs/trajectories_spider_grpo_singleturn_best_dev_turn1.jsonl
 
-- turn 1 timeout count
-- turn 1 invalid-format count
-- turn 1 SQLite syntax error count
-- turn 1 schema or hallucination error count
-- turn 1 wrong-result count
-- turn 2 rescue count by each first-turn error category
-- final accuracy including timeouts
-- final accuracy excluding first-turn timeout cases
+python3 multi_turn_infer_eval.py \
+  --backend vllm \
+  --dataset spider \
+  --data-root data/spider \
+  --model "$SINGLE_TURN_BEST" \
+  --max-turns 2 \
+  --output logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json \
+  --trajectories-out logs/trajectories_spider_grpo_singleturn_best_dev_turn2.jsonl
+```
 
 Acceptance criteria:
 
-- We can tell whether turn 2 mainly fixes semantic SQL errors or mostly recovers
-  from timeout/format noise.
-- Do not make a strong semantic self-correction claim unless non-timeout,
-  non-format rescues are visible.
+- The run uses `GRPO_MULTI_TURN=0`.
+- The single-turn control uses a distinct checkpoint directory.
+- The selected best checkpoint is evaluated on full Spider dev.
+- The report compares these rows under the same evaluator where possible:
+  - SFT baseline
+  - multi-turn GRPO best150, `max_turns=1`
+  - multi-turn GRPO best150, `max_turns=2`
+  - single-turn GRPO best, `max_turns=1`
+  - single-turn GRPO best, `max_turns=2`
 
-## Task 4: BIRD Transfer Evaluation
+Interpretation:
 
-Run transfer evaluation for the same SFT baseline and GRPO best checkpoint if
-BIRD data is available on the server.
+- If single-turn GRPO `max_turns=1` is close to multi-turn GRPO `max_turns=1`,
+  then most training gain may come from GRPO reward optimization rather than
+  multi-turn training.
+- If multi-turn GRPO `max_turns=2` clearly beats single-turn GRPO `max_turns=2`,
+  then the project has stronger evidence that multi-turn training itself helped.
+
+## Task 2: Add Stable Timeout-Excluded Field Aliases
+
+The current multi-turn evaluator works, but its output field names do not fully
+match the previous task spec. Add stable aliases before more reports depend on
+the JSON schema.
+
+In `multi_turn_infer_eval.py`, keep existing fields and add these aliases:
+
+- `accuracy_excluding_first_turn_timeout`
+- `turn1_accuracy_excluding_timeout`
+- `final_accuracy_excluding_first_turn_timeout`
+- `turn2_rescue_rate_excluding_first_turn_timeout`
+
+The existing plural field `final_accuracy_excluding_first_turn_timeouts` can
+remain for backward compatibility.
+
+Add or update tests in `tests/test_multi_turn_infer_eval.py`, then run:
+
+```bash
+python3 -m pytest tests/test_multi_turn_infer_eval.py
+```
+
+Acceptance criteria:
+
+- The test passes.
+- New summary JSONs contain both old and new timeout-excluded field names.
+
+## Task 3: BIRD Transfer Evaluation
+
+Run BIRD transfer after confirming the server has usable BIRD data. On the Mac
+control plane, `data/bird` exists, but the previous server run reported that the
+server path was missing.
+
+First verify on the server:
+
+```bash
+test -e data/bird
+find data/bird -maxdepth 3 -type f | head
+```
+
+If BIRD is missing on the server, sync or unpack it before evaluating.
+
+Evaluate SFT and multi-turn GRPO best150:
 
 ```bash
 python3 infer_eval.py \
@@ -195,64 +186,54 @@ python3 infer_eval.py \
   --output logs/infer_eval_bird_grpo_best150_dev.json
 ```
 
-Acceptance criteria:
-
-- If BIRD data exists, record SFT vs GRPO transfer results.
-- If BIRD data is missing, write down exactly what path or file is missing.
-
-## Task 5: Optional Single-Turn GRPO Control Run
-
-Only do this after Tasks 1-4.
-
-If compute budget allows, run a separate GRPO control from the SFT checkpoint
-with multi-turn disabled:
+After Task 1 finishes, also evaluate the selected single-turn-GRPO checkpoint on
+BIRD:
 
 ```bash
-GRPO_MULTI_TURN=0 START_RAY=1 bash scripts/train_grpo_openrlhf.sh
+python3 infer_eval.py \
+  --backend vllm \
+  --dataset bird \
+  --data-root data/bird \
+  --model "$SINGLE_TURN_BEST" \
+  --output logs/infer_eval_bird_grpo_singleturn_best_dev.json
 ```
 
-Requirements:
+Acceptance criteria:
 
-- Use a separate run directory.
-- Do not overwrite the existing best step 150 checkpoint.
-- Evaluate the best single-turn-GRPO checkpoint on full Spider dev.
-- Compare:
-  - SFT baseline
-  - single-turn GRPO
-  - multi-turn GRPO best150
+- If BIRD data exists, record SFT, multi-turn GRPO, and single-turn GRPO results.
+- If BIRD data is still unavailable, record the exact missing path or file.
 
-This is the strongest evidence for whether multi-turn training itself mattered,
-but it is more expensive than the same-checkpoint ablation.
+## Task 4: Update Experiment Records
 
-## Task 6: Update Experiment Records
+After Tasks 1-3, update `docs/experiment-results.md` with:
 
-After Tasks 2-4, update `docs/experiment-results.md` with:
+- Single-turn GRPO training config summary.
+- Single-turn GRPO best global step and checkpoint path.
+- Spider full-dev result from `infer_eval.py`.
+- Spider `max_turns=1` and `max_turns=2` results from
+  `multi_turn_infer_eval.py`.
+- Comparison against multi-turn GRPO best150.
+- BIRD transfer results, if available.
+- Any missing-data caveats.
 
-- Spider `max_turns=1` result.
-- Spider `max_turns=2` result.
-- Same-checkpoint multi-turn gain.
-- Rescue breakdown by first-turn error category.
-- BIRD SFT result, if available.
-- BIRD GRPO best150 result, if available.
-- Any missing-data or timeout caveats.
-
-Then commit and push:
+Commit and push:
 
 ```bash
-git add docs/experiment-results.md tasks.md
-git commit -m "Record next evaluation tasks and ablations"
+git add docs/experiment-results.md tasks.md multi_turn_infer_eval.py tests/test_multi_turn_infer_eval.py
+git commit -m "Record single-turn GRPO control plan and results"
 git push origin main
 ```
 
-## Resume-Safe Claim Template
+## Current Claim Boundary
 
-Use this claim now:
+Safe claim now:
 
 ```text
-Trained a local Text-to-SQL self-correction agent with sandbox execution rewards;
 GRPO improved Spider dev execution match from 70.0% to 71.8% over an SFT
-cold-start baseline, with checkpoint selection based on internal eval.
+cold-start baseline, and same-checkpoint execution-feedback self-correction
+improved the selected GRPO checkpoint from 72.1% to 74.5% on Spider dev without
+timeout-rescue inflation.
 ```
 
-Do not claim that multi-turn self-correction caused the gain until the
-same-checkpoint `max_turns=1` vs `max_turns=2` ablation is complete.
+Do not claim that multi-turn GRPO training itself is better than single-turn GRPO
+training until Task 1 is complete.
