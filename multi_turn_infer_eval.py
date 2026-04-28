@@ -175,6 +175,7 @@ def _first_turn_category(turn: dict[str, Any]) -> str:
 
 
 def _empty_summary(dataset: str, split: str, max_turns: int) -> dict[str, Any]:
+    turn_keys = [f"turn{turn_index}" for turn_index in range(2, max(4, max_turns) + 1)]
     return {
         "dataset": dataset,
         "split": split,
@@ -188,9 +189,16 @@ def _empty_summary(dataset: str, split: str, max_turns: int) -> dict[str, Any]:
         "final_matched": 0,
         "final_accuracy": 0.0,
         "final_exec_match_with_2_turns": 0.0,
+        "matched_by_turn": {"turn1": 0},
+        "accuracy_by_turn": {"turn1": 0.0},
         "rescued_by_turn2": 0,
+        **{f"rescued_by_{turn_key}": 0 for turn_key in turn_keys if turn_key != "turn2"},
         "turn2_rescue_rate_all": 0.0,
         "turn2_rescue_rate_among_turn1_failures": 0.0,
+        "rescue_rate_by_turn": {turn_key: 0.0 for turn_key in turn_keys},
+        "marginal_accuracy_gain_by_turn": {turn_key: 0.0 for turn_key in turn_keys},
+        "timeout_rescue_by_turn": {turn_key: 0 for turn_key in turn_keys},
+        "non_timeout_rescue_by_turn": {turn_key: 0 for turn_key in turn_keys},
         "timeout_first_turn": 0,
         "timeout_rescued_by_turn2": 0,
         "timeout_rescue": 0,
@@ -212,8 +220,18 @@ def _empty_summary(dataset: str, split: str, max_turns: int) -> dict[str, Any]:
         "final_accuracy_excluding_first_turn_timeout": 0.0,
         "turn2_rescue_rate_excluding_first_turn_timeout": 0.0,
         "first_turn_error_counts": {},
+        "rescue_by_first_turn_error": {},
         "turn2_rescue_by_first_turn_error": {},
     }
+
+
+def _rescue_turn(row: dict[str, Any]) -> int | None:
+    if row["turns"][0]["exec_match"]:
+        return None
+    for turn in row["turns"][1:]:
+        if turn["exec_match"]:
+            return int(turn["turn_index"])
+    return None
 
 
 def summarize_trajectories(
@@ -230,14 +248,26 @@ def summarize_trajectories(
     turn1_matched = sum(int(row["turns"][0]["exec_match"]) for row in trajectories)
     final_matched = sum(int(row["final_exec_match"]) for row in trajectories)
     first_turn_errors: Counter[str] = Counter()
+    rescue_by_turn: Counter[int] = Counter()
+    timeout_rescue_by_turn: Counter[int] = Counter()
+    non_timeout_rescue_by_turn: Counter[int] = Counter()
     rescue_by_error: Counter[str] = Counter()
+    turn2_rescue_by_error: Counter[str] = Counter()
 
     for row in trajectories:
         category = _first_turn_category(row["turns"][0])
         if category != "success":
             first_turn_errors[category] += 1
-        if row.get("rescued_by_turn2", False):
+        rescue_turn = _rescue_turn(row)
+        if rescue_turn is not None:
+            rescue_by_turn[rescue_turn] += 1
             rescue_by_error[category] += 1
+            if rescue_turn == 2:
+                turn2_rescue_by_error[category] += 1
+            if category == "timeout":
+                timeout_rescue_by_turn[rescue_turn] += 1
+            else:
+                non_timeout_rescue_by_turn[rescue_turn] += 1
 
     turn1_failures = total - turn1_matched
     timeout_first_turn = first_turn_errors["timeout"]
@@ -253,9 +283,30 @@ def summarize_trajectories(
         if _first_turn_category(row["turns"][0]) != "timeout"
     )
 
-    rescued_by_turn2 = sum(int(row.get("rescued_by_turn2", False)) for row in trajectories)
+    turn_range = range(2, max(4, max_turns) + 1)
+    turn_keys = [f"turn{turn_index}" for turn_index in turn_range]
+    matched_by_turn: dict[str, int] = {}
+    accuracy_by_turn: dict[str, float] = {}
+    for turn_index in range(1, max_turns + 1):
+        key = f"turn{turn_index}"
+        matched_at_turn = sum(
+            int(
+                any(
+                    turn["exec_match"]
+                    for turn in row["turns"]
+                    if int(turn["turn_index"]) <= turn_index
+                )
+            )
+            for row in trajectories
+        )
+        matched_by_turn[key] = matched_at_turn
+        accuracy_by_turn[key] = matched_at_turn / total
+
+    rescued_by_turn2 = rescue_by_turn[2]
     non_timeout_rescued_by_turn2 = sum(
-        count for category, count in rescue_by_error.items() if category != "timeout"
+        count
+        for category, count in turn2_rescue_by_error.items()
+        if category != "timeout"
     )
     final_accuracy_excluding_first_turn_timeout = (
         non_timeout_final_matched / non_timeout_total if non_timeout_total else 0.0
@@ -273,20 +324,43 @@ def summarize_trajectories(
         "final_matched": final_matched,
         "final_accuracy": final_matched / total,
         "final_exec_match_with_2_turns": final_matched / total,
+        "matched_by_turn": matched_by_turn,
+        "accuracy_by_turn": accuracy_by_turn,
         "rescued_by_turn2": rescued_by_turn2,
+        **{
+            f"rescued_by_turn{turn_index}": rescue_by_turn[turn_index]
+            for turn_index in turn_range
+            if turn_index != 2
+        },
         "turn2_rescue_rate_all": rescued_by_turn2 / total,
         "turn2_rescue_rate_among_turn1_failures": (
             rescued_by_turn2 / turn1_failures if turn1_failures else 0.0
         ),
+        "rescue_rate_by_turn": {
+            turn_key: rescue_by_turn[int(turn_key.removeprefix("turn"))] / total
+            for turn_key in turn_keys
+        },
+        "marginal_accuracy_gain_by_turn": {
+            turn_key: rescue_by_turn[int(turn_key.removeprefix("turn"))] / total
+            for turn_key in turn_keys
+        },
+        "timeout_rescue_by_turn": {
+            turn_key: timeout_rescue_by_turn[int(turn_key.removeprefix("turn"))]
+            for turn_key in turn_keys
+        },
+        "non_timeout_rescue_by_turn": {
+            turn_key: non_timeout_rescue_by_turn[int(turn_key.removeprefix("turn"))]
+            for turn_key in turn_keys
+        },
         "timeout_first_turn": timeout_first_turn,
-        "timeout_rescued_by_turn2": rescue_by_error["timeout"],
-        "timeout_rescue": rescue_by_error["timeout"],
+        "timeout_rescued_by_turn2": turn2_rescue_by_error["timeout"],
+        "timeout_rescue": turn2_rescue_by_error["timeout"],
         "non_timeout_rescued_by_turn2": non_timeout_rescued_by_turn2,
-        "syntax_rescued_by_turn2": rescue_by_error["syntax"],
-        "syntax_error_rescue": rescue_by_error["syntax"],
-        "execution_error_rescued_by_turn2": rescue_by_error["execution"],
-        "wrong_result_rescued_by_turn2": rescue_by_error["wrong_result"],
-        "wrong_result_rescue": rescue_by_error["wrong_result"],
+        "syntax_rescued_by_turn2": turn2_rescue_by_error["syntax"],
+        "syntax_error_rescue": turn2_rescue_by_error["syntax"],
+        "execution_error_rescued_by_turn2": turn2_rescue_by_error["execution"],
+        "wrong_result_rescued_by_turn2": turn2_rescue_by_error["wrong_result"],
+        "wrong_result_rescue": turn2_rescue_by_error["wrong_result"],
         "turn1_timeout_count": timeout_first_turn,
         "turn1_invalid_format_count": first_turn_errors["format"],
         "turn1_syntax_error_count": first_turn_errors["syntax"],
@@ -314,7 +388,8 @@ def summarize_trajectories(
             else 0.0
         ),
         "first_turn_error_counts": dict(sorted(first_turn_errors.items())),
-        "turn2_rescue_by_first_turn_error": dict(sorted(rescue_by_error.items())),
+        "rescue_by_first_turn_error": dict(sorted(rescue_by_error.items())),
+        "turn2_rescue_by_first_turn_error": dict(sorted(turn2_rescue_by_error.items())),
     }
     return summary
 
@@ -331,45 +406,64 @@ def run_multi_turn_eval(
     timeout_s: float,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     labels = [_label_for_example(dataset, root, example) for example in examples]
-    turn1_responses = generator.generate(prompts)
 
     trajectories: list[dict[str, Any]] = []
-    turn2_prompts: list[str] = []
-    turn2_indices: list[int] = []
+    current_prompts = list(prompts)
+    pending_indices = list(range(len(examples)))
 
-    for idx, (example, prompt, label, response) in enumerate(
-        zip(examples, prompts, labels, turn1_responses)
-    ):
-        score = score_response(response, label, timeout_s=timeout_s)
-        turn = _turn_record(turn_index=1, response=response, score=score)
-        row = {
-            "index": example.index,
-            "db_id": example.db_id,
-            "question": example.question,
-            "gold_sql": example.gold_sql,
-            "turns": [turn],
-            "turn1_exec_match": turn["exec_match"],
-            "final_exec_match": turn["exec_match"],
-            "rescued_by_turn2": False,
-        }
-        trajectories.append(row)
-        if max_turns > 1 and not turn["exec_match"]:
-            feedback = _feedback_for_response(label, response, timeout_s)
-            turn2_prompts.append(_append_feedback(prompt, response, feedback))
-            turn2_indices.append(idx)
+    for turn_index in range(1, max_turns + 1):
+        if not pending_indices:
+            break
 
-    if max_turns > 1 and turn2_prompts:
-        turn2_responses = generator.generate(turn2_prompts)
-        for idx, response in zip(turn2_indices, turn2_responses):
+        batch_prompts = [current_prompts[idx] for idx in pending_indices]
+        responses = generator.generate(batch_prompts)
+        next_pending_indices: list[int] = []
+
+        for idx, response in zip(pending_indices, responses):
+            example = examples[idx]
             label = labels[idx]
             score = score_response(response, label, timeout_s=timeout_s)
-            turn = _turn_record(turn_index=2, response=response, score=score)
-            row = trajectories[idx]
-            row["turns"].append(turn)
+            turn = _turn_record(turn_index=turn_index, response=response, score=score)
+
+            if turn_index == 1:
+                row = {
+                    "index": example.index,
+                    "db_id": example.db_id,
+                    "question": example.question,
+                    "gold_sql": example.gold_sql,
+                    "turns": [turn],
+                    "turn1_exec_match": turn["exec_match"],
+                    "final_exec_match": turn["exec_match"],
+                    "rescued_by_turn2": False,
+                    **{
+                        f"rescued_by_turn{future_turn}": False
+                        for future_turn in range(3, max_turns + 1)
+                    },
+                }
+                trajectories.append(row)
+            else:
+                row = trajectories[idx]
+                row["turns"].append(turn)
+
             row["final_exec_match"] = turn["exec_match"]
-            row["rescued_by_turn2"] = bool(
-                (not row["turn1_exec_match"]) and turn["exec_match"]
-            )
+            if turn_index >= 2:
+                rescue_key = f"rescued_by_turn{turn_index}"
+                row[rescue_key] = bool(
+                    (not row["turn1_exec_match"]) and turn["exec_match"]
+                )
+                if turn_index == 2:
+                    row["rescued_by_turn2"] = row[rescue_key]
+
+            if not turn["exec_match"] and turn_index < max_turns:
+                feedback = _feedback_for_response(label, response, timeout_s)
+                current_prompts[idx] = _append_feedback(
+                    current_prompts[idx],
+                    response,
+                    feedback,
+                )
+                next_pending_indices.append(idx)
+
+        pending_indices = next_pending_indices
 
     summary = summarize_trajectories(
         trajectories,
@@ -405,8 +499,8 @@ def main() -> int:
     parser.add_argument("--max-model-len", type=int, default=None)
     args = parser.parse_args()
 
-    if args.max_turns not in (1, 2):
-        raise ValueError("This evaluator currently supports --max-turns 1 or 2")
+    if args.max_turns < 1:
+        raise ValueError("--max-turns must be >= 1")
 
     root = resolve_dataset_root(args.dataset, args.data_root)
     split_file = resolve_split_file(args.dataset, root, args.split, args.dev_file)

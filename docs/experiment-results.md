@@ -10,10 +10,14 @@ are not treated as benchmark results unless an explicit evaluator was run.
 | 2026-04-27 | SFT cold start | `checkpoints/qwen2.5-coder-3b-logtir-sft` | `remote-logs/infer_eval_spider_sft_dev.json` | dev | 1034 | 724 | 70.02% | SFT training used `--eval.steps -1`; this result came from a separate `infer_eval.py` run. |
 | 2026-04-27 | Multi-turn GRPO best checkpoint | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `remote-logs/infer_eval_spider_grpo_best150_dev.json` | dev | 1034 | 742 | 71.76% | Server artifact path: `logs/infer_eval_spider_grpo_best150_dev.json`. Selected from step 150; improves SFT by +1.74 pp. |
 | 2026-04-28 | Multi-turn GRPO best checkpoint, first-turn-only ablation | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_best150_dev_turn1.json` | dev | 1034 | 745 | 72.05% | Same checkpoint as the official GRPO candidate; `max_turns=1`, no repair opportunity. |
-| 2026-04-28 | Multi-turn GRPO best checkpoint, two-turn ablation | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_best150_dev_turn2.json` | dev | 1034 | 770 | 74.47% | Same checkpoint and split as the first-turn-only ablation; allows one repair from execution feedback. |
+| 2026-04-28 | Multi-turn GRPO best checkpoint, two-turn ablation | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_best150_dev_turn2.json` | dev | 1034 | 771 | 74.56% | Refreshed arbitrary-turn evaluator run; allows one repair from execution feedback. |
+| 2026-04-28 | Multi-turn GRPO best checkpoint, three-turn sweep | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_best150_dev_turn3.json` | dev | 1034 | 772 | 74.66% | Two repair attempts; third turn adds a small gain. |
+| 2026-04-28 | Multi-turn GRPO best checkpoint, four-turn sweep | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_best150_dev_turn4.json` | dev | 1034 | 778 | 75.24% | Three repair attempts; no timeout rescues. |
 | 2026-04-28 | Single-turn GRPO control best checkpoint | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_singleturn_best_dev.json` | dev | 1034 | 728 | 70.41% | `GRPO_MULTI_TURN=0`; selected by internal step-150 eval. Full-dev gain over SFT is small: +0.39 pp. |
-| 2026-04-28 | Single-turn GRPO control, first-turn-only ablation | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_singleturn_best_dev_turn1.json` | dev | 1034 | 730 | 70.60% | `max_turns=1`, no repair opportunity. |
-| 2026-04-28 | Single-turn GRPO control, two-turn ablation | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json` | dev | 1034 | 747 | 72.24% | `max_turns=2`; one repair attempt after execution feedback. |
+| 2026-04-28 | Single-turn GRPO control, first-turn-only ablation | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_singleturn_best_dev_turn1.json` | dev | 1034 | 729 | 70.50% | `max_turns=1`, no repair opportunity. |
+| 2026-04-28 | Single-turn GRPO control, two-turn ablation | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json` | dev | 1034 | 753 | 72.82% | `max_turns=2`; one repair attempt after execution feedback. |
+| 2026-04-28 | Single-turn GRPO control, three-turn sweep | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_singleturn_best_dev_turn3.json` | dev | 1034 | 749 | 72.44% | Independent run; use its `matched_by_turn` for within-run marginal gains. |
+| 2026-04-28 | Single-turn GRPO control, four-turn sweep | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_singleturn_best_dev_turn4.json` | dev | 1034 | 750 | 72.53% | Four-turn sweep saturates after turn 3 in this run. |
 
 ### Spider Main Comparison
 
@@ -21,8 +25,10 @@ are not treated as benchmark results unless an explicit evaluator was run.
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
 | 2026-04-27 | SFT cold start | Multi-turn GRPO step-150 best checkpoint | 70.02% | 71.76% | +1.74 pp | 5.81% | 18 fewer Spider dev execution mismatches, from 310 down to 292. |
 | 2026-04-28 | SFT cold start | Single-turn GRPO control step-150 best checkpoint | 70.02% | 70.41% | +0.39 pp | 1.29% | 4 fewer Spider dev execution mismatches, from 310 down to 306. |
-| 2026-04-28 | Single-turn GRPO control, `max_turns=1` | Multi-turn GRPO best150, `max_turns=1` | 70.60% | 72.05% | +1.45 pp | 4.92% | Same split and evaluator family; independent vLLM generations can vary slightly. |
-| 2026-04-28 | Single-turn GRPO control, `max_turns=2` | Multi-turn GRPO best150, `max_turns=2` | 72.24% | 74.47% | +2.22 pp | 8.01% | 23 fewer execution mismatches under the two-turn evaluator, from 287 down to 264. |
+| 2026-04-28 | Single-turn GRPO control, `max_turns=1` | Multi-turn GRPO best150, `max_turns=1` | 70.50% | 72.05% | +1.55 pp | 5.25% | Same split and evaluator family; independent vLLM generations can vary slightly. |
+| 2026-04-28 | Single-turn GRPO control, `max_turns=2` | Multi-turn GRPO best150, `max_turns=2` | 72.82% | 74.56% | +1.74 pp | 6.41% | 18 fewer execution mismatches under the refreshed two-turn evaluator, from 281 down to 263. |
+| 2026-04-28 | Single-turn GRPO control, `max_turns=3` | Multi-turn GRPO best150, `max_turns=3` | 72.44% | 74.66% | +2.22 pp | 8.07% | 23 fewer execution mismatches, from 285 down to 262. |
+| 2026-04-28 | Single-turn GRPO control, `max_turns=4` | Multi-turn GRPO best150, `max_turns=4` | 72.53% | 75.24% | +2.71 pp | 9.86% | 28 fewer execution mismatches, from 284 down to 256. |
 
 ### Single-Turn GRPO Control
 
@@ -65,25 +71,33 @@ Full Spider dev evaluations for the selected single-turn control checkpoint:
 | Artifact | Evaluator | Max turns | Total | Matched | Exec match | Timeout-excluded exec match | Turn-2 rescues |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `logs/infer_eval_spider_grpo_singleturn_best_dev.json` | `infer_eval.py` | 1 | 1034 | 728 | 70.41% | n/a | n/a |
-| `logs/infer_eval_spider_grpo_singleturn_best_dev_turn1.json` | `multi_turn_infer_eval.py` | 1 | 1034 | 730 | 70.60% | 70.94% | 0 |
-| `logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json` | `multi_turn_infer_eval.py` | 2 | 1034 | 747 | 72.24% | 72.67% | 22 |
+| `logs/infer_eval_spider_grpo_singleturn_best_dev_turn1.json` | `multi_turn_infer_eval.py` | 1 | 1034 | 729 | 70.50% | 70.91% | 0 |
+| `logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json` | `multi_turn_infer_eval.py` | 2 | 1034 | 753 | 72.82% | 73.18% | 20 |
+| `logs/infer_eval_spider_grpo_singleturn_best_dev_turn3.json` | `multi_turn_infer_eval.py` | 3 | 1034 | 749 | 72.44% | 72.72% | 20 |
+| `logs/infer_eval_spider_grpo_singleturn_best_dev_turn4.json` | `multi_turn_infer_eval.py` | 4 | 1034 | 750 | 72.53% | 72.96% | 21 |
+
+Each `max_turns` artifact is an independent vLLM generation run, so first-turn
+counts can drift by a few examples. For marginal extra-turn analysis, prefer
+`matched_by_turn` and `marginal_accuracy_gain_by_turn` within the same artifact.
 
 Key summary fields from
-`logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json`:
+`logs/infer_eval_spider_grpo_singleturn_best_dev_turn4.json`:
 
 | Field | Value |
 | --- | ---: |
-| `turn1_exec_match` | 70.12% |
-| `final_exec_match_with_2_turns` | 72.24% |
-| `rescued_by_turn2` | 22 |
-| `turn2_rescue_rate_all` | 2.13% |
-| `turn2_rescue_rate_among_turn1_failures` | 7.12% |
-| `accuracy_excluding_first_turn_timeout` | 72.67% |
-| `final_accuracy_excluding_first_turn_timeout` | 72.67% |
-| `turn2_rescue_rate_excluding_first_turn_timeout` | 2.14% |
-| `timeout_rescue` | 0 |
-| `syntax_error_rescue` | 0 |
-| `wrong_result_rescue` | 13 |
+| `turn1_exec_match` | 70.21% |
+| `final_accuracy` | 72.53% |
+| `rescued_by_turn2` | 21 |
+| `rescued_by_turn3` | 3 |
+| `rescued_by_turn4` | 0 |
+| `marginal_accuracy_gain_by_turn.turn2` | 2.03% |
+| `marginal_accuracy_gain_by_turn.turn3` | 0.29% |
+| `marginal_accuracy_gain_by_turn.turn4` | 0.00% |
+| `accuracy_excluding_first_turn_timeout` | 72.96% |
+| `final_accuracy_excluding_first_turn_timeout` | 72.96% |
+| `timeout_rescue_by_turn.turn2` | 0 |
+| `timeout_rescue_by_turn.turn3` | 0 |
+| `timeout_rescue_by_turn.turn4` | 0 |
 
 Turn-2 rescue attribution for the single-turn control:
 
@@ -92,68 +106,92 @@ Turn-2 rescue attribution for the single-turn control:
 | `timeout` | 6 | 0 |
 | `invalid_format` | 0 | 0 |
 | `syntax_error` | 1 | 0 |
-| `schema_hallucination` | 73 | 6 |
-| `wrong_result` | 186 | 13 |
-| `empty_result` | 41 | 3 |
+| `schema_hallucination` | 72 | 5 |
+| `wrong_result` | 188 | 13 |
+| `empty_result` | 39 | 3 |
 | `execution_error` | 2 | 0 |
 
+Cumulative rescue attribution by first-turn category in the four-turn
+single-turn-control run:
+
+| First-turn category | Rescued by turns 2-4 |
+| --- | ---: |
+| `empty_result` | 3 |
+| `execution_error` | 1 |
+| `schema_hallucination` | 5 |
+| `wrong_result` | 15 |
+
 Interpretation: the single-turn GRPO control did not match the selected
-multi-turn GRPO checkpoint on Spider. Under the same two-turn evaluator, the
-multi-turn GRPO checkpoint reached 74.47% while the single-turn control reached
-72.24%. This is stronger evidence that the multi-turn training/feedback setup
-adds value beyond ordinary single-turn GRPO, though the BIRD transfer gain below
-is small.
+multi-turn GRPO checkpoint on Spider. Under the refreshed four-turn evaluator,
+the multi-turn GRPO checkpoint reached 75.24% while the single-turn control
+reached 72.53%. This is stronger evidence that the multi-turn training/feedback
+setup adds value beyond ordinary single-turn GRPO, though the BIRD transfer gain
+below is small.
 
-### Same-Checkpoint Multi-Turn Ablation
+### Multi-Turn GRPO Inference-Time Turn Sweep
 
-This ablation isolates inference-time self-correction by evaluating the selected
+This sweep isolates inference-time self-correction by evaluating the selected
 step-150 GRPO checkpoint on Spider dev with the same checkpoint and split under
-`max_turns=1` and `max_turns=2`.
+`max_turns=1,2,3,4`. Each `max_turns` artifact is an independent vLLM generation
+run, so first-turn counts can drift slightly; use `matched_by_turn` inside the
+same artifact for marginal turn analysis.
 
-| Date | Artifact | Max turns | Total | Matched | Exec match | Notes |
-| --- | --- | ---: | ---: | ---: | ---: | --- |
-| 2026-04-28 | `logs/infer_eval_spider_grpo_best150_dev_turn1.json` | 1 | 1034 | 745 | 72.05% | First SQL only. |
-| 2026-04-28 | `logs/infer_eval_spider_grpo_best150_dev_turn2.json` | 2 | 1034 | 770 | 74.47% | One repair attempt after execution feedback. |
+| Date | Artifact | Max turns | Total | Matched | Exec match | `matched_by_turn` | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 2026-04-28 | `logs/infer_eval_spider_grpo_best150_dev_turn1.json` | 1 | 1034 | 745 | 72.05% | `{"turn1": 745}` | First SQL only. |
+| 2026-04-28 | `logs/infer_eval_spider_grpo_best150_dev_turn2.json` | 2 | 1034 | 771 | 74.56% | `{"turn1": 746, "turn2": 771}` | One repair attempt after execution feedback. |
+| 2026-04-28 | `logs/infer_eval_spider_grpo_best150_dev_turn3.json` | 3 | 1034 | 772 | 74.66% | `{"turn1": 744, "turn2": 769, "turn3": 772}` | Two repair attempts. |
+| 2026-04-28 | `logs/infer_eval_spider_grpo_best150_dev_turn4.json` | 4 | 1034 | 778 | 75.24% | `{"turn1": 744, "turn2": 771, "turn3": 775, "turn4": 778}` | Three repair attempts; no timeout rescues. |
 
-Same-checkpoint multi-turn gain:
+Marginal gains inside
+`logs/infer_eval_spider_grpo_best150_dev_turn4.json`:
 
 ```text
-accuracy(max_turns=2) - accuracy(max_turns=1)
-= 0.7446808511 - 0.7205029014
-= +2.42 pp
+turn 1 -> 2 gain: +27 examples, +2.61 pp
+turn 2 -> 3 gain: +4 examples, +0.39 pp
+turn 3 -> 4 gain: +3 examples, +0.29 pp
 ```
 
-Key summary fields from `logs/infer_eval_spider_grpo_best150_dev_turn2.json`:
+Key summary fields from `logs/infer_eval_spider_grpo_best150_dev_turn4.json`:
 
 | Field | Value |
 | --- | ---: |
-| `turn1_exec_match` | 72.05% |
-| `final_exec_match_with_2_turns` | 74.47% |
-| `rescued_by_turn2` | 25 |
-| `turn2_rescue_rate_all` | 2.42% |
-| `turn2_rescue_rate_among_turn1_failures` | 8.65% |
-| `timeout_rescue` | 0 |
-| `syntax_error_rescue` | 0 |
-| `wrong_result_rescue` | 13 |
+| `turn1_exec_match` | 71.95% |
+| `final_accuracy` | 75.24% |
+| `rescued_by_turn2` | 27 |
+| `rescued_by_turn3` | 4 |
+| `rescued_by_turn4` | 3 |
+| `marginal_accuracy_gain_by_turn.turn2` | 2.61% |
+| `marginal_accuracy_gain_by_turn.turn3` | 0.39% |
+| `marginal_accuracy_gain_by_turn.turn4` | 0.29% |
+| `accuracy_excluding_first_turn_timeout` | 75.53% |
+| `final_accuracy_excluding_first_turn_timeout` | 75.53% |
+| `timeout_rescue_by_turn.turn2` | 0 |
+| `timeout_rescue_by_turn.turn3` | 0 |
+| `timeout_rescue_by_turn.turn4` | 0 |
+| `non_timeout_rescue_by_turn.turn2` | 27 |
+| `non_timeout_rescue_by_turn.turn3` | 4 |
+| `non_timeout_rescue_by_turn.turn4` | 3 |
 
-Turn-2 rescue attribution by first-turn failure category:
+Cumulative rescue attribution by first-turn category in the four-turn
+multi-turn-GRPO run:
 
-| First-turn category | Turn-1 count | Rescued by turn 2 |
+| First-turn category | Turn-1 count | Rescued by turns 2-4 |
 | --- | ---: | ---: |
 | `timeout` | 4 | 0 |
 | `invalid_format` | 0 | 0 |
 | `syntax_error` | 0 | 0 |
 | `schema_hallucination` | 62 | 8 |
-| `wrong_result` | 181 | 13 |
-| `empty_result` | 37 | 4 |
-| `execution_error` | 5 | 0 |
+| `wrong_result` | 182 | 19 |
+| `empty_result` | 37 | 5 |
+| `execution_error` | 5 | 2 |
 
-Final accuracy excluding first-turn timeout cases was 74.76%. The observed
-rescues are non-timeout and non-format rescues: 13 wrong-result fixes, 8
-schema/hallucination fixes, and 4 empty-result fixes. Both ablation runs used
-the same checkpoint, data split, backend, and SQL timeout; the first-turn
-matched count was identical across the independent `max_turns=1` and
-`max_turns=2` runs.
+Interpretation: gains still saturate strongly after turn 2, but turns 3 and 4
+add 7 additional non-timeout rescues in the same four-turn run. The strongest
+cost-effective project claim should stay focused on two-turn self-correction,
+with optional extra inference turns reported as remaining headroom on harder
+examples. Timeout rescues are zero, so these gains should be counted as
+semantic/error self-correction rather than timeout recovery.
 
 Newer `multi_turn_infer_eval.py` summaries keep the old plural
 `final_accuracy_excluding_first_turn_timeouts` field and also emit stable alias
