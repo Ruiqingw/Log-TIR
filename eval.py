@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -104,6 +105,19 @@ def execution_match(
     }
 
 
+def _validate_gold_sql(
+    gold_sql: str,
+    db_path: Path,
+    timeout_s: float,
+) -> dict[str, Any]:
+    result = execute_sql(db_path, gold_sql, timeout_s=timeout_s)
+    return {
+        "match": bool(result.get("ok")),
+        "pred_result": result,
+        "gold_result": result,
+    }
+
+
 def _load_predictions(
     pred_path: Path | None,
     gold_sql: list[str],
@@ -134,6 +148,7 @@ def evaluate_dataset(
     timeout_s: float,
     limit: int | None,
     dataset: str = "spider",
+    workers: int = 1,
 ) -> dict[str, Any]:
     examples = load_text_to_sql_examples(dataset, dev_path)
     if limit is not None:
@@ -149,27 +164,40 @@ def evaluate_dataset(
             f"Prediction count {len(predictions)} does not match example count {len(examples)}"
         )
 
-    matched = 0
-    failures: list[dict[str, Any]] = []
-
-    for index, (example, pred_sql) in enumerate(zip(examples, predictions)):
+    def evaluate_one(
+        payload: tuple[int, TextToSQLExample, str],
+    ) -> tuple[int, dict[str, Any] | None]:
+        index, example, pred_sql = payload
         db_path = resolve_db_path(dataset, spider_root, example.db_id)
-        outcome = execution_match(pred_sql, example.gold_sql, db_path, timeout_s)
+        if use_gold_predictions:
+            outcome = _validate_gold_sql(example.gold_sql, db_path, timeout_s)
+        else:
+            outcome = execution_match(pred_sql, example.gold_sql, db_path, timeout_s)
         if outcome["match"]:
-            matched += 1
-            continue
+            return 1, None
 
-        failures.append(
-            {
-                "index": index,
-                "db_id": example.db_id,
-                "question": example.question,
-                "gold_sql": example.gold_sql,
-                "pred_sql": pred_sql,
-                "pred_error": outcome["pred_result"].get("error", ""),
-                "gold_error": outcome["gold_result"].get("error", ""),
-            }
-        )
+        return 0, {
+            "index": index,
+            "db_id": example.db_id,
+            "question": example.question,
+            "gold_sql": example.gold_sql,
+            "pred_sql": pred_sql,
+            "pred_error": outcome["pred_result"].get("error", ""),
+            "gold_error": outcome["gold_result"].get("error", ""),
+        }
+
+    payloads = [
+        (index, example, pred_sql)
+        for index, (example, pred_sql) in enumerate(zip(examples, predictions))
+    ]
+    if workers <= 1:
+        evaluated = [evaluate_one(payload) for payload in payloads]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            evaluated = list(executor.map(evaluate_one, payloads))
+
+    matched = sum(match for match, _ in evaluated)
+    failures = [failure for _, failure in evaluated if failure is not None]
 
     total = len(examples)
     return {
@@ -237,6 +265,12 @@ def main() -> int:
         default=None,
         help="Optional path to write mismatches as JSON.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel read-only SQL evaluation workers.",
+    )
     args = parser.parse_args()
 
     data_root_arg = args.data_root if args.data_root is not None else args.spider_root
@@ -254,6 +288,7 @@ def main() -> int:
         timeout_s=args.timeout,
         limit=args.limit,
         dataset=args.dataset,
+        workers=args.workers,
     )
 
     if args.failures_out is not None:

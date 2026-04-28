@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+import eval as eval_module
 from eval import _normalize_cell, evaluate_dataset, execution_match
 
 
@@ -82,6 +83,29 @@ def test_evaluate_dataset_with_gold_predictions(tmp_path: Path) -> None:
     assert report["accuracy"] == 1.0
 
 
+def test_evaluate_dataset_gold_predictions_execute_gold_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spider_root, dev_path = _build_spider_fixture(tmp_path)
+    calls: list[str] = []
+
+    def fake_execute_sql(db_path: Path, sql: str, timeout_s: float):
+        calls.append(sql)
+        return {"ok": True, "rows": []}
+
+    monkeypatch.setattr(eval_module, "execute_sql", fake_execute_sql)
+    report = evaluate_dataset(
+        dev_path=dev_path,
+        spider_root=spider_root,
+        pred_path=None,
+        use_gold_predictions=True,
+        timeout_s=3.0,
+        limit=None,
+    )
+    assert report["matched"] == 1
+    assert calls == ["select ch from letters order by ch asc"]
+
+
 def test_evaluate_dataset_with_bird_fixture(tmp_path: Path) -> None:
     bird_root = tmp_path / "bird"
     db_root = bird_root / "dev_databases" / "toy_db"
@@ -111,6 +135,7 @@ def test_evaluate_dataset_with_bird_fixture(tmp_path: Path) -> None:
         timeout_s=3.0,
         limit=None,
         dataset="bird",
+        workers=2,
     )
     assert report["total"] == 1
     assert report["matched"] == 1

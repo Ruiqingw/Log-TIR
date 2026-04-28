@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -210,34 +211,39 @@ def evaluate_responses(
     examples: list[TextToSQLExample],
     responses: list[str],
     timeout_s: float,
+    workers: int = 1,
 ) -> dict[str, Any]:
     if len(examples) != len(responses):
         raise ValueError(
             f"Response count {len(responses)} does not match example count {len(examples)}"
         )
 
-    matched = 0
-    results: list[dict[str, Any]] = []
-    for example, response in zip(examples, responses):
+    def evaluate_one(payload: tuple[TextToSQLExample, str]) -> dict[str, Any]:
+        example, response = payload
         pred_sql = extract_sql(response)
         db_path = resolve_db_path(dataset, root, example.db_id)
         outcome = execution_match(pred_sql, example.gold_sql, db_path, timeout_s=timeout_s)
-        matched += int(outcome["match"])
-        results.append(
-            {
-                "index": example.index,
-                "db_id": example.db_id,
-                "question": example.question,
-                "gold_sql": example.gold_sql,
-                "response": response,
-                "pred_sql": pred_sql,
-                "match": outcome["match"],
-                "pred_error": outcome["pred_result"].get("error", ""),
-                "gold_error": outcome["gold_result"].get("error", ""),
-            }
-        )
+        return {
+            "index": example.index,
+            "db_id": example.db_id,
+            "question": example.question,
+            "gold_sql": example.gold_sql,
+            "response": response,
+            "pred_sql": pred_sql,
+            "match": outcome["match"],
+            "pred_error": outcome["pred_result"].get("error", ""),
+            "gold_error": outcome["gold_result"].get("error", ""),
+        }
+
+    payloads = list(zip(examples, responses))
+    if workers <= 1:
+        results = [evaluate_one(payload) for payload in payloads]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            results = list(executor.map(evaluate_one, payloads))
 
     total = len(examples)
+    matched = sum(int(result["match"]) for result in results)
     return {
         "dataset": dataset,
         "total": total,
@@ -279,6 +285,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("logs/infer_eval_results.json"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--timeout", type=float, default=3.0)
+    parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=1.0)
@@ -324,7 +331,14 @@ def main() -> int:
             max_model_len=args.max_model_len,
         )
 
-    report = evaluate_responses(args.dataset, root, examples, responses, args.timeout)
+    report = evaluate_responses(
+        args.dataset,
+        root,
+        examples,
+        responses,
+        args.timeout,
+        workers=args.workers,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     summary = {key: value for key, value in report.items() if key != "results"}

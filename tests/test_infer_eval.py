@@ -50,8 +50,9 @@ def test_evaluate_responses_reports_exec_match(tmp_path: Path) -> None:
         )
     ]
     responses = ["<thought>Use count.</thought>\n<action>SELECT count(*) FROM items</action>"]
-    report = evaluate_responses("spider", root, examples, responses, timeout_s=3.0)
+    report = evaluate_responses(
+        "spider", root, examples, responses, timeout_s=3.0, workers=2
+    )
     assert report["total"] == 1
     assert report["matched"] == 1
     assert report["accuracy"] == 1.0
-

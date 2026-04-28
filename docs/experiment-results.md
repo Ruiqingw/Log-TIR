@@ -211,10 +211,45 @@ before model evaluation.
 | 2026-04-28 | SFT cold start | `checkpoints/qwen2.5-coder-3b-logtir-sft` | `logs/infer_eval_bird_sft_dev.json` | dev | 1534 | 357 | 23.27% | Transfer baseline. |
 | 2026-04-28 | Multi-turn GRPO best checkpoint | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_bird_grpo_best150_dev.json` | dev | 1534 | 366 | 23.86% | +0.59 pp over SFT, 9 fewer mismatches. |
 | 2026-04-28 | Single-turn GRPO control best checkpoint | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_bird_grpo_singleturn_best_dev.json` | dev | 1534 | 354 | 23.08% | -0.19 pp vs SFT and -0.78 pp vs multi-turn GRPO. |
+| 2026-04-28 | SFT cold start, saved-response timeout-30 re-eval | `checkpoints/qwen2.5-coder-3b-logtir-sft` | `logs/infer_eval_bird_sft_dev_timeout30.json` | dev | 1534 | 365 | 23.79% | Reused saved responses; `timeout=30`, `workers=8`; cache observed 216 gold timeouts. |
+| 2026-04-28 | Multi-turn GRPO best checkpoint, saved-response timeout-30 re-eval | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_bird_grpo_best150_dev_timeout30.json` | dev | 1534 | 375 | 24.45% | +0.65 pp over timeout-30 SFT, 10 fewer mismatches. |
+| 2026-04-28 | Single-turn GRPO control, saved-response timeout-30 re-eval | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_bird_grpo_singleturn_best_dev_timeout30.json` | dev | 1534 | 363 | 23.66% | -0.13 pp vs timeout-30 SFT and -0.78 pp vs timeout-30 multi-turn GRPO. |
 
 The BIRD transfer signal is weak but directionally consistent with Spider:
 multi-turn GRPO is best among the three local checkpoints, while the
-single-turn GRPO control does not improve transfer.
+single-turn GRPO control does not improve transfer. It is incorrect to say that
+multi-turn GRPO is below SFT on BIRD: under the original timeout-3 evaluation it
+is 366/1534 versus SFT's 357/1534, and under the timeout-30 saved-response
+re-evaluation it is 375/1534 versus SFT's 365/1534. The single-turn GRPO control
+is the one that falls slightly below SFT.
+
+### BIRD Timeout Sensitivity
+
+The BIRD transfer result is timeout-limited and should not be treated as a clean
+benchmark until the gold SQL baseline is stronger. Full BIRD gold-SQL validation
+was run with longer timeouts:
+
+| Date | Command / artifact | Timeout | Workers | Total | Gold SQL matched | Gold SQL accuracy | Gold timeout failures | Main timeout-heavy DBs |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 2026-04-28 | `logs/bird_gold_failures_timeout10.json` | 10s | 4 | 1534 | 1210 | 78.88% | 324 | `card_games` 145, `codebase_community` 126, `european_football_2` 32, `financial` 18 |
+| 2026-04-28 | `logs/bird_gold_failures_timeout30.json` | 30s | 8 | 1534 | 1350 | 88.01% | 184 | `codebase_community` 90, `card_games` 63, `european_football_2` 26, `financial` 5 |
+
+The timeout-30 model re-evaluation reused the already generated responses from
+the timeout-3 BIRD artifacts through
+`scripts/reevaluate_saved_infer_eval.py`, so it did not rerun vLLM generation.
+It skipped the known timeout-30 gold failures and cached gold execution results
+before evaluating model SQL. Under the same `workers=8` load, the cache pass
+observed 216 gold timeouts, so the timeout-30 model numbers are still
+timeout-limited. They are useful for directionality, not as a final clean BIRD
+score.
+
+Observed BIRD failure modes are consistent with a hard pure-transfer setting:
+the project trained on Spider only, while BIRD has larger real-world schemas,
+different naming conventions, more columns with spaces, and dialect/function
+issues such as `YEAR` or unsupported arithmetic functions. Many model failures
+are schema and dialect errors (`no such column`, `no such table`, syntax errors
+around unquoted column names with spaces), so Spider-shaped GRPO reward does not
+guarantee strong BIRD generalization.
 
 ## GRPO Checkpoint Selection
 
