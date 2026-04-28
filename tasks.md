@@ -25,9 +25,93 @@ Official Spider results already recorded in `docs/experiment-results.md`:
 
 This supports an inference-time self-correction claim for the selected
 checkpoint. It does not yet prove that multi-turn GRPO training is better than
-single-turn GRPO training. The next priority is the control run below.
+single-turn GRPO training. The next priorities are the inference-time turn sweep
+and the single-turn control run below.
 
-## Task 1: Single-Turn GRPO Control Run
+## Task 1: Inference-Time More-Turn Sweep
+
+Goal: test whether allowing more inference-time repair attempts gives additional
+self-correction gains beyond the current 2-turn result. This is inference only;
+do not retrain a new model for this task.
+
+First extend `multi_turn_infer_eval.py` so it supports arbitrary
+`--max-turns >= 1` instead of only `1` or `2`.
+
+Implementation requirements:
+
+- Reuse the same checkpoint and decoding settings across all turn counts.
+- For each failed turn, append the latest execution feedback and generate the
+  next repair prompt.
+- Stop early when a turn reaches execution match.
+- Preserve one trajectory row per example with all turns in order.
+- Report cumulative final accuracy and marginal rescues by turn.
+- Keep timeout rescues separate from non-timeout semantic/error rescues.
+
+The summary JSON must include at least:
+
+- `total`
+- `matched`
+- `accuracy`
+- `max_turns`
+- `turn1_matched`
+- `turn1_accuracy`
+- `final_matched`
+- `final_accuracy`
+- `final_accuracy_excluding_first_turn_timeout`
+- `rescued_by_turn2`
+- `rescued_by_turn3`
+- `rescued_by_turn4`
+- `rescue_rate_by_turn`
+- `marginal_accuracy_gain_by_turn`
+- `timeout_rescue_by_turn`
+- `non_timeout_rescue_by_turn`
+- `first_turn_error_counts`
+- `rescue_by_first_turn_error`
+
+Run a full Spider dev turn sweep for the selected multi-turn GRPO checkpoint:
+
+```bash
+for TURNS in 1 2 3 4; do
+  python3 multi_turn_infer_eval.py \
+    --backend vllm \
+    --dataset spider \
+    --data-root data/spider \
+    --model checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf \
+    --max-turns "$TURNS" \
+    --output "logs/infer_eval_spider_grpo_best150_dev_turn${TURNS}.json" \
+    --trajectories-out "logs/trajectories_spider_grpo_best150_dev_turn${TURNS}.jsonl"
+done
+```
+
+Acceptance criteria:
+
+- Full Spider dev finishes for `max_turns=1,2,3,4`.
+- The `max_turns=1` and `max_turns=2` numbers reproduce the existing results
+  within normal deterministic-decoding tolerance.
+- The report states marginal gains:
+
+```text
+turn 1 -> 2 gain
+turn 2 -> 3 gain
+turn 3 -> 4 gain
+```
+
+- Timeout rescues are reported separately and are not counted as semantic
+  self-correction evidence.
+
+Interpretation:
+
+- If gains saturate after 2 turns, keep the project claim focused on 2-turn
+  self-correction.
+- If turns 3 or 4 add meaningful non-timeout rescues, report that inference-time
+  self-correction has additional headroom, especially on harder examples.
+
+After the single-turn GRPO control checkpoint is selected, run the same
+`max_turns=1,2,3,4` sweep on that checkpoint too. This will show whether extra
+inference turns help only the multi-turn-trained model or also help the
+single-turn-trained model.
+
+## Task 2: Single-Turn GRPO Control Run
 
 Goal: test whether multi-turn GRPO training matters beyond ordinary single-turn
 GRPO reward optimization.
@@ -71,8 +155,12 @@ checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-ckpt/
 logs/infer_eval_spider_grpo_singleturn_best_dev.json
 logs/infer_eval_spider_grpo_singleturn_best_dev_turn1.json
 logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json
+logs/infer_eval_spider_grpo_singleturn_best_dev_turn3.json
+logs/infer_eval_spider_grpo_singleturn_best_dev_turn4.json
 logs/trajectories_spider_grpo_singleturn_best_dev_turn1.jsonl
 logs/trajectories_spider_grpo_singleturn_best_dev_turn2.jsonl
+logs/trajectories_spider_grpo_singleturn_best_dev_turn3.jsonl
+logs/trajectories_spider_grpo_singleturn_best_dev_turn4.jsonl
 ```
 
 After training, evaluate the best single-turn-GRPO checkpoint on full Spider dev:
@@ -87,23 +175,16 @@ python3 infer_eval.py \
   --model "$SINGLE_TURN_BEST" \
   --output logs/infer_eval_spider_grpo_singleturn_best_dev.json
 
-python3 multi_turn_infer_eval.py \
-  --backend vllm \
-  --dataset spider \
-  --data-root data/spider \
-  --model "$SINGLE_TURN_BEST" \
-  --max-turns 1 \
-  --output logs/infer_eval_spider_grpo_singleturn_best_dev_turn1.json \
-  --trajectories-out logs/trajectories_spider_grpo_singleturn_best_dev_turn1.jsonl
-
-python3 multi_turn_infer_eval.py \
-  --backend vllm \
-  --dataset spider \
-  --data-root data/spider \
-  --model "$SINGLE_TURN_BEST" \
-  --max-turns 2 \
-  --output logs/infer_eval_spider_grpo_singleturn_best_dev_turn2.json \
-  --trajectories-out logs/trajectories_spider_grpo_singleturn_best_dev_turn2.jsonl
+for TURNS in 1 2 3 4; do
+  python3 multi_turn_infer_eval.py \
+    --backend vllm \
+    --dataset spider \
+    --data-root data/spider \
+    --model "$SINGLE_TURN_BEST" \
+    --max-turns "$TURNS" \
+    --output "logs/infer_eval_spider_grpo_singleturn_best_dev_turn${TURNS}.json" \
+    --trajectories-out "logs/trajectories_spider_grpo_singleturn_best_dev_turn${TURNS}.jsonl"
+done
 ```
 
 Acceptance criteria:
@@ -113,20 +194,19 @@ Acceptance criteria:
 - The selected best checkpoint is evaluated on full Spider dev.
 - The report compares these rows under the same evaluator where possible:
   - SFT baseline
-  - multi-turn GRPO best150, `max_turns=1`
-  - multi-turn GRPO best150, `max_turns=2`
-  - single-turn GRPO best, `max_turns=1`
-  - single-turn GRPO best, `max_turns=2`
+  - multi-turn GRPO best150, `max_turns=1,2,3,4`
+  - single-turn GRPO best, `max_turns=1,2,3,4`
 
 Interpretation:
 
 - If single-turn GRPO `max_turns=1` is close to multi-turn GRPO `max_turns=1`,
   then most training gain may come from GRPO reward optimization rather than
   multi-turn training.
-- If multi-turn GRPO `max_turns=2` clearly beats single-turn GRPO `max_turns=2`,
-  then the project has stronger evidence that multi-turn training itself helped.
+- If multi-turn GRPO clearly beats single-turn GRPO under the same inference
+  turn budget, especially at `max_turns=2,3,4`, then the project has stronger
+  evidence that multi-turn training itself helped.
 
-## Task 2: Add Stable Timeout-Excluded Field Aliases
+## Task 3: Add Stable Timeout-Excluded Field Aliases
 
 The current multi-turn evaluator works, but its output field names do not fully
 match the previous task spec. Add stable aliases before more reports depend on
@@ -153,7 +233,7 @@ Acceptance criteria:
 - The test passes.
 - New summary JSONs contain both old and new timeout-excluded field names.
 
-## Task 3: BIRD Transfer Evaluation
+## Task 4: BIRD Transfer Evaluation
 
 Run BIRD transfer after confirming the server has usable BIRD data. The dataset
 must exist on the server-local filesystem under `data/bird`; a Mac-only copy is
@@ -190,7 +270,7 @@ python3 infer_eval.py \
   --output logs/infer_eval_bird_grpo_best150_dev.json
 ```
 
-After Task 1 finishes, also evaluate the selected single-turn-GRPO checkpoint on
+After Task 2 finishes, also evaluate the selected single-turn-GRPO checkpoint on
 BIRD:
 
 ```bash
@@ -207,14 +287,16 @@ Acceptance criteria:
 - If BIRD data exists, record SFT, multi-turn GRPO, and single-turn GRPO results.
 - If BIRD data is still unavailable, record the exact missing path or file.
 
-## Task 4: Update Experiment Records
+## Task 5: Update Experiment Records
 
-After Tasks 1-3, update `docs/experiment-results.md` with:
+After Tasks 1-4, update `docs/experiment-results.md` with:
 
+- Multi-turn GRPO best150 inference-time turn sweep for `max_turns=1,2,3,4`.
+- Marginal gain from each extra inference turn.
 - Single-turn GRPO training config summary.
 - Single-turn GRPO best global step and checkpoint path.
 - Spider full-dev result from `infer_eval.py`.
-- Spider `max_turns=1` and `max_turns=2` results from
+- Spider `max_turns=1,2,3,4` results from
   `multi_turn_infer_eval.py`.
 - Comparison against multi-turn GRPO best150.
 - BIRD transfer results, if available.
@@ -240,4 +322,5 @@ timeout-rescue inflation.
 ```
 
 Do not claim that multi-turn GRPO training itself is better than single-turn GRPO
-training until Task 1 is complete.
+training until the inference-time turn sweep and single-turn GRPO control are
+both complete.
