@@ -23,10 +23,12 @@ def _load_examples(path: Path) -> list[dict[str, Any]]:
 
 def _build_rl_prompt(question: str, schema_text: str) -> str:
     return (
-        "You are a SQLite Text-to-SQL agent.\n"
-        "Given the schema and question, return exactly two tags:\n"
-        "<thought>brief reasoning</thought>\n"
-        "<action>one SQLite query</action>\n"
+        "You are a SQLite Text-to-SQL assistant.\n"
+        "Given a database schema and a natural-language question, think briefly "
+        "and then output one SQL query.\n"
+        "You must answer using exactly two tags:\n"
+        "<thought>...</thought>\n"
+        "<action>...</action>\n"
         "The <action> section must contain only one executable SQLite query.\n\n"
         f"{schema_text}\n\n"
         f"Question: {question}"

@@ -92,6 +92,34 @@ def test_score_response_resolves_relative_db_path(
     assert score_response(response, label)["exec_match"] is True
 
 
+def test_score_response_resolves_relative_db_path_from_repo_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import openrlhf_reward
+
+    repo_root = tmp_path / "repo"
+    spider_root = repo_root / "data" / "spider" / "spider_data"
+    db_root = spider_root / "database" / "toy_db"
+    db_root.mkdir(parents=True)
+    db_path = db_root / "toy_db.sqlite"
+    _build_db(db_path)
+    cwd = tmp_path / "ray_worker"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.delenv("SPIDER_ROOT", raising=False)
+    monkeypatch.setattr(openrlhf_reward, "REPO_ROOT", repo_root)
+    label = {
+        "db_id": "toy_db",
+        "db_path": "database/toy_db/toy_db.sqlite",
+        "gold_sql": "SELECT count(*) FROM items",
+    }
+    response = (
+        "<thought>Read schema and answer.</thought>\n"
+        "<action>SELECT count(*) FROM items</action>"
+    )
+    assert score_response(response, label)["exec_match"] is True
+
+
 def test_score_response_caches_gold_sql_execution(tmp_path: Path, monkeypatch) -> None:
     import openrlhf_reward
 
@@ -134,3 +162,46 @@ def test_reward_func_returns_openrlhf_reward_payload(tmp_path: Path) -> None:
     assert result["extra_logs"]["format_match_rate"] == 1.0
     assert result["extra_logs"]["exec_match_rate"] == 1.0
     assert result["extra_logs"]["avg_action_sql_length"] > 0
+
+
+def test_reward_func_recovers_response_when_decoded_prompt_differs(tmp_path: Path) -> None:
+    db_path = tmp_path / "toy.sqlite"
+    _build_db(db_path)
+    prompt = (
+        "Return exactly two tags:\n"
+        "<thought>brief reasoning</thought>\n"
+        "<action>one SQLite query</action>\n"
+        "Question prompt"
+    )
+    decoded_query_prefix = " " + prompt
+    response = (
+        "<thought>Read schema and answer.</thought>\n"
+        "<action>SELECT count(*) FROM items</action>"
+    )
+    label = json.dumps({"db_path": str(db_path), "gold_sql": "SELECT count(*) FROM items"})
+
+    result = reward_func([decoded_query_prefix + response], [prompt], [label])
+
+    assert result["rewards"] == pytest.approx(1.3)
+    assert result["extra_logs"]["format_match_rate"] == 1.0
+    assert result["extra_logs"]["exec_match_rate"] == 1.0
+
+
+def test_reward_func_recovers_response_after_prompt_with_leading_noise(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "toy.sqlite"
+    _build_db(db_path)
+    prompt = "Question prompt\n"
+    response = (
+        "1\n"
+        "<thought>Read schema and answer.</thought>\n"
+        "<action>SELECT count(*) FROM items</action>"
+    )
+    label = json.dumps({"db_path": str(db_path), "gold_sql": "SELECT count(*) FROM items"})
+
+    result = reward_func([prompt + response], [prompt], [label])
+
+    assert result["rewards"] == pytest.approx(1.3)
+    assert result["extra_logs"]["format_match_rate"] == 1.0
+    assert result["extra_logs"]["exec_match_rate"] == 1.0

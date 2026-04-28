@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -13,12 +14,53 @@ from sandbox import execute_sql
 FORMAT_REWARD = 0.1
 NO_ERROR_REWARD = 0.2
 EXEC_MATCH_REWARD = 1.0
+TAGGED_RESPONSE_SEARCH = re.compile(
+    r"<thought>.*?</thought>\s*<action>.*?</action>",
+    re.DOTALL,
+)
+REPO_ROOT = Path(__file__).resolve().parent
+_REWARD_DEBUG_COUNT = 0
+
+
+def _last_parseable_tagged_response(text: str) -> str | None:
+    for match in reversed(list(TAGGED_RESPONSE_SEARCH.finditer(text))):
+        candidate = match.group(0).strip()
+        try:
+            parse_tagged_response(candidate)
+        except ValueError:
+            continue
+        return candidate
+    return None
+
+
+def _parseable_or_recovered_response(text: str) -> str | None:
+    candidate = text.strip()
+    try:
+        parse_tagged_response(candidate)
+    except ValueError:
+        return _last_parseable_tagged_response(candidate)
+    return candidate
 
 
 def _response_from_query(query: str, prompt: str) -> str:
+    candidates: list[str] = []
     if query.startswith(prompt):
-        return query[len(prompt) :].strip()
-    return query.strip()
+        candidates.append(query[len(prompt) :])
+    candidates.append(query)
+
+    for candidate in candidates:
+        recovered = _parseable_or_recovered_response(candidate)
+        if recovered is not None:
+            return recovered
+
+    return candidates[0].strip()
+
+
+def _spider_root() -> Path:
+    spider_root = Path(os.environ.get("SPIDER_ROOT", "data/spider/spider_data"))
+    if spider_root.is_absolute():
+        return spider_root
+    return REPO_ROOT / spider_root
 
 
 def _db_path_from_label(label: dict[str, Any]) -> Path:
@@ -28,11 +70,63 @@ def _db_path_from_label(label: dict[str, Any]) -> Path:
             return db_path
         if db_path.exists():
             return db_path
-        spider_root = Path(os.environ.get("SPIDER_ROOT", "data/spider/spider_data"))
-        return spider_root / db_path
-    spider_root = Path(os.environ.get("SPIDER_ROOT", "data/spider/spider_data"))
+        repo_relative = REPO_ROOT / db_path
+        if repo_relative.exists():
+            return repo_relative
+        return _spider_root() / db_path
     db_id = label["db_id"]
-    return spider_root / "database" / db_id / f"{db_id}.sqlite"
+    return _spider_root() / "database" / db_id / f"{db_id}.sqlite"
+
+
+def _debug_path() -> Path:
+    path = Path(os.environ.get("LOGTIR_REWARD_DEBUG_PATH", "logs/reward_debug.jsonl"))
+    if path.is_absolute():
+        return path
+    return REPO_ROOT / path
+
+
+def _reward_timeout_s() -> float:
+    timeout = os.environ.get("LOGTIR_REWARD_TIMEOUT")
+    if timeout is None:
+        timeout = os.environ.get("LOGTIR_AGENT_TIMEOUT", "3.0")
+    return float(timeout)
+
+
+def _maybe_debug_reward(
+    query: str,
+    prompt: str,
+    label: str | dict[str, Any],
+    response: str,
+    score: dict[str, Any],
+) -> None:
+    global _REWARD_DEBUG_COUNT
+    limit = int(os.environ.get("LOGTIR_REWARD_DEBUG_LIMIT", "0") or 0)
+    if limit <= 0 or _REWARD_DEBUG_COUNT >= limit:
+        return
+    _REWARD_DEBUG_COUNT += 1
+
+    parsed_label = json.loads(label) if isinstance(label, str) else label
+    db_path = _db_path_from_label(parsed_label)
+    payload = {
+        "index": _REWARD_DEBUG_COUNT,
+        "cwd": os.getcwd(),
+        "repo_root": str(REPO_ROOT),
+        "reward_file": __file__,
+        "query_startswith_prompt": query.startswith(prompt),
+        "query_len": len(query),
+        "prompt_len": len(prompt),
+        "query_tail": query[-1000:],
+        "prompt_tail": prompt[-500:],
+        "response": response,
+        "label": parsed_label,
+        "db_path": str(db_path),
+        "db_exists": db_path.exists(),
+        "score": score,
+    }
+    path = _debug_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 @lru_cache(maxsize=8192)
@@ -157,7 +251,8 @@ def reward_func(queries, prompts, labels):  # type: ignore[no-untyped-def]
     payloads = []
     for query, prompt, label in zip(queries, prompts, labels):
         response = _response_from_query(query, prompt)
-        score = score_response(response, label)
+        score = score_response(response, label, timeout_s=_reward_timeout_s())
+        _maybe_debug_reward(query, prompt, label, response, score)
         reward = float(score["reward"])
         payloads.append(
             {

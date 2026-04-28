@@ -207,6 +207,10 @@ def _empty_summary(dataset: str, split: str, max_turns: int) -> dict[str, Any]:
         "turn1_wrong_result_count": 0,
         "final_accuracy_including_timeouts": 0.0,
         "final_accuracy_excluding_first_turn_timeouts": 0.0,
+        "accuracy_excluding_first_turn_timeout": 0.0,
+        "turn1_accuracy_excluding_timeout": 0.0,
+        "final_accuracy_excluding_first_turn_timeout": 0.0,
+        "turn2_rescue_rate_excluding_first_turn_timeout": 0.0,
         "first_turn_error_counts": {},
         "turn2_rescue_by_first_turn_error": {},
     }
@@ -243,8 +247,19 @@ def summarize_trajectories(
         for row in trajectories
         if _first_turn_category(row["turns"][0]) != "timeout"
     )
+    non_timeout_turn1_matched = sum(
+        int(row["turns"][0]["exec_match"])
+        for row in trajectories
+        if _first_turn_category(row["turns"][0]) != "timeout"
+    )
 
     rescued_by_turn2 = sum(int(row.get("rescued_by_turn2", False)) for row in trajectories)
+    non_timeout_rescued_by_turn2 = sum(
+        count for category, count in rescue_by_error.items() if category != "timeout"
+    )
+    final_accuracy_excluding_first_turn_timeout = (
+        non_timeout_final_matched / non_timeout_total if non_timeout_total else 0.0
+    )
     summary = {
         "dataset": dataset,
         "split": split,
@@ -266,9 +281,7 @@ def summarize_trajectories(
         "timeout_first_turn": timeout_first_turn,
         "timeout_rescued_by_turn2": rescue_by_error["timeout"],
         "timeout_rescue": rescue_by_error["timeout"],
-        "non_timeout_rescued_by_turn2": sum(
-            count for category, count in rescue_by_error.items() if category != "timeout"
-        ),
+        "non_timeout_rescued_by_turn2": non_timeout_rescued_by_turn2,
         "syntax_rescued_by_turn2": rescue_by_error["syntax"],
         "syntax_error_rescue": rescue_by_error["syntax"],
         "execution_error_rescued_by_turn2": rescue_by_error["execution"],
@@ -284,7 +297,21 @@ def summarize_trajectories(
         "turn1_unsafe_sql_count": first_turn_errors["unsafe_sql"],
         "final_accuracy_including_timeouts": final_matched / total,
         "final_accuracy_excluding_first_turn_timeouts": (
-            non_timeout_final_matched / non_timeout_total if non_timeout_total else 0.0
+            final_accuracy_excluding_first_turn_timeout
+        ),
+        "accuracy_excluding_first_turn_timeout": (
+            final_accuracy_excluding_first_turn_timeout
+        ),
+        "turn1_accuracy_excluding_timeout": (
+            non_timeout_turn1_matched / non_timeout_total if non_timeout_total else 0.0
+        ),
+        "final_accuracy_excluding_first_turn_timeout": (
+            final_accuracy_excluding_first_turn_timeout
+        ),
+        "turn2_rescue_rate_excluding_first_turn_timeout": (
+            non_timeout_rescued_by_turn2 / non_timeout_total
+            if non_timeout_total
+            else 0.0
         ),
         "first_turn_error_counts": dict(sorted(first_turn_errors.items())),
         "turn2_rescue_by_first_turn_error": dict(sorted(rescue_by_error.items())),

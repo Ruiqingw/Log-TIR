@@ -78,8 +78,12 @@ def test_multi_turn_eval_counts_wrong_result_rescue(tmp_path: Path) -> None:
     assert summary["final_matched"] == 2
     assert summary["rescued_by_turn2"] == 1
     assert summary["wrong_result_rescue"] == 1
+    assert summary["accuracy_excluding_first_turn_timeout"] == 1.0
+    assert summary["turn1_accuracy_excluding_timeout"] == 0.5
+    assert summary["final_accuracy_excluding_first_turn_timeout"] == 1.0
+    assert summary["final_accuracy_excluding_first_turn_timeouts"] == 1.0
+    assert summary["turn2_rescue_rate_excluding_first_turn_timeout"] == 0.5
     assert summary["turn2_rescue_by_first_turn_error"] == {"wrong_result": 1}
     assert trajectories[0]["rescued_by_turn2"] is True
     assert trajectories[0]["turns"][0]["error_category"] == "wrong_result"
     assert trajectories[0]["turns"][1]["exec_match"] is True
-

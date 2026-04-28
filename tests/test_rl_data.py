@@ -20,7 +20,10 @@ def test_build_grpo_prompts_writes_prompt_and_label_jsonl(tmp_path: Path) -> Non
     record = json.loads(output_path.read_text(encoding="utf-8").splitlines()[0])
     assert record["task"] == "text-to-sql-rl"
     assert record["datasource"] == "spider"
-    assert record["prompt"].startswith("You are a SQLite Text-to-SQL agent.")
+    assert record["prompt"].startswith("You are a SQLite Text-to-SQL assistant.")
+    assert "<thought>...</thought>" in record["prompt"]
+    assert "<action>...</action>" in record["prompt"]
+    assert "<thought>brief reasoning</thought>" not in record["prompt"]
     label = json.loads(record["label"])
     assert label["db_id"] == "toy_db"
     assert label["gold_sql"]
