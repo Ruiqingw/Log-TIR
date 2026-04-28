@@ -7,6 +7,7 @@ are not treated as benchmark results unless an explicit evaluator was run.
 
 | Date | Stage | Checkpoint | Evaluation artifact | Split | Total | Matched | Exec match | Notes |
 | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |
+| 2026-04-28 | Raw base model | `Qwen/Qwen2.5-Coder-3B-Instruct` | `remote-logs/infer_eval_spider_base_qwen25_coder3b_dev.json` | dev | 1034 | 117 | 11.32% | Pre-SFT baseline; confirms that direct prompting is far below the SFT cold start. |
 | 2026-04-27 | SFT cold start | `checkpoints/qwen2.5-coder-3b-logtir-sft` | `remote-logs/infer_eval_spider_sft_dev.json` | dev | 1034 | 724 | 70.02% | SFT training used `--eval.steps -1`; this result came from a separate `infer_eval.py` run. |
 | 2026-04-27 | Multi-turn GRPO best checkpoint | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `remote-logs/infer_eval_spider_grpo_best150_dev.json` | dev | 1034 | 742 | 71.76% | Server artifact path: `logs/infer_eval_spider_grpo_best150_dev.json`. Selected from step 150; improves SFT by +1.74 pp. |
 | 2026-04-28 | Multi-turn GRPO best checkpoint, first-turn-only ablation | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_spider_grpo_best150_dev_turn1.json` | dev | 1034 | 745 | 72.05% | Same checkpoint as the official GRPO candidate; `max_turns=1`, no repair opportunity. |
@@ -23,12 +24,14 @@ are not treated as benchmark results unless an explicit evaluator was run.
 
 | Date | Baseline | Candidate | Baseline exec match | Candidate exec match | Absolute delta | Error reduction | Notes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| 2026-04-28 | Raw base model | SFT cold start | 11.32% | 70.02% | +58.70 pp | 66.19% | 607 fewer Spider dev execution mismatches, from 917 down to 310; validates the SFT cold-start stage. |
 | 2026-04-27 | SFT cold start | Multi-turn GRPO step-150 best checkpoint | 70.02% | 71.76% | +1.74 pp | 5.81% | 18 fewer Spider dev execution mismatches, from 310 down to 292. |
 | 2026-04-28 | SFT cold start | Single-turn GRPO control step-150 best checkpoint | 70.02% | 70.41% | +0.39 pp | 1.29% | 4 fewer Spider dev execution mismatches, from 310 down to 306. |
 | 2026-04-28 | Single-turn GRPO control, `max_turns=1` | Multi-turn GRPO best150, `max_turns=1` | 70.50% | 72.05% | +1.55 pp | 5.25% | Same split and evaluator family; independent vLLM generations can vary slightly. |
 | 2026-04-28 | Single-turn GRPO control, `max_turns=2` | Multi-turn GRPO best150, `max_turns=2` | 72.82% | 74.56% | +1.74 pp | 6.41% | 18 fewer execution mismatches under the refreshed two-turn evaluator, from 281 down to 263. |
 | 2026-04-28 | Single-turn GRPO control, `max_turns=3` | Multi-turn GRPO best150, `max_turns=3` | 72.44% | 74.66% | +2.22 pp | 8.07% | 23 fewer execution mismatches, from 285 down to 262. |
 | 2026-04-28 | Single-turn GRPO control, `max_turns=4` | Multi-turn GRPO best150, `max_turns=4` | 72.53% | 75.24% | +2.71 pp | 9.86% | 28 fewer execution mismatches, from 284 down to 256. |
+| 2026-04-28 | Raw base model | Multi-turn GRPO best150, `max_turns=4` | 11.32% | 75.24% | +63.93 pp | 72.08% | Pipeline-level comparison from raw prompting to the final self-correcting agent; not used to isolate a single training effect. |
 
 ### Single-Turn GRPO Control
 
@@ -208,20 +211,23 @@ before model evaluation.
 
 | Date | Stage | Checkpoint | Evaluation artifact | Split | Total | Matched | Exec match | Notes |
 | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |
+| 2026-04-28 | Raw base model | `Qwen/Qwen2.5-Coder-3B-Instruct` | `remote-logs/infer_eval_bird_base_qwen25_coder3b_dev.json` | dev | 1534 | 95 | 6.19% | Pre-SFT transfer baseline under the original timeout-3 evaluator. |
 | 2026-04-28 | SFT cold start | `checkpoints/qwen2.5-coder-3b-logtir-sft` | `logs/infer_eval_bird_sft_dev.json` | dev | 1534 | 357 | 23.27% | Transfer baseline. |
 | 2026-04-28 | Multi-turn GRPO best checkpoint | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_bird_grpo_best150_dev.json` | dev | 1534 | 366 | 23.86% | +0.59 pp over SFT, 9 fewer mismatches. |
 | 2026-04-28 | Single-turn GRPO control best checkpoint | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_bird_grpo_singleturn_best_dev.json` | dev | 1534 | 354 | 23.08% | -0.19 pp vs SFT and -0.78 pp vs multi-turn GRPO. |
+| 2026-04-28 | Raw base model, saved-response timeout-30 re-eval | `Qwen/Qwen2.5-Coder-3B-Instruct` | `remote-logs/infer_eval_bird_base_qwen25_coder3b_dev_timeout30.json` | dev | 1534 | 96 | 6.26% | Reused saved responses; `timeout=30`, `workers=8`; cache observed 225 gold timeouts. |
 | 2026-04-28 | SFT cold start, saved-response timeout-30 re-eval | `checkpoints/qwen2.5-coder-3b-logtir-sft` | `logs/infer_eval_bird_sft_dev_timeout30.json` | dev | 1534 | 365 | 23.79% | Reused saved responses; `timeout=30`, `workers=8`; cache observed 216 gold timeouts. |
 | 2026-04-28 | Multi-turn GRPO best checkpoint, saved-response timeout-30 re-eval | `checkpoints/qwen2.5-coder-3b-logtir-grpo-ckpt/best_global_step150_hf` | `logs/infer_eval_bird_grpo_best150_dev_timeout30.json` | dev | 1534 | 375 | 24.45% | +0.65 pp over timeout-30 SFT, 10 fewer mismatches. |
 | 2026-04-28 | Single-turn GRPO control, saved-response timeout-30 re-eval | `checkpoints/qwen2.5-coder-3b-logtir-grpo-singleturn-timeout10-ckpt/best_global_step150_hf` | `logs/infer_eval_bird_grpo_singleturn_best_dev_timeout30.json` | dev | 1534 | 363 | 23.66% | -0.13 pp vs timeout-30 SFT and -0.78 pp vs timeout-30 multi-turn GRPO. |
 
-The BIRD transfer signal is weak but directionally consistent with Spider:
-multi-turn GRPO is best among the three local checkpoints, while the
-single-turn GRPO control does not improve transfer. It is incorrect to say that
-multi-turn GRPO is below SFT on BIRD: under the original timeout-3 evaluation it
-is 366/1534 versus SFT's 357/1534, and under the timeout-30 saved-response
-re-evaluation it is 375/1534 versus SFT's 365/1534. The single-turn GRPO control
-is the one that falls slightly below SFT.
+The BIRD transfer signal is weak but directionally consistent with Spider. The
+raw base model is very low on BIRD (`6.26%` under timeout-30), SFT provides the
+large transfer jump to `23.79%`, and multi-turn GRPO is best among the trained
+checkpoints at `24.45%`. It is incorrect to say that multi-turn GRPO is below
+SFT on BIRD: under the original timeout-3 evaluation it is 366/1534 versus
+SFT's 357/1534, and under the timeout-30 saved-response re-evaluation it is
+375/1534 versus SFT's 365/1534. The single-turn GRPO control is the one that
+falls slightly below SFT.
 
 ### BIRD Timeout Sensitivity
 
@@ -240,8 +246,8 @@ the timeout-3 BIRD artifacts through
 It skipped the known timeout-30 gold failures and cached gold execution results
 before evaluating model SQL. Under the same `workers=8` load, the cache pass
 observed 216 gold timeouts, so the timeout-30 model numbers are still
-timeout-limited. They are useful for directionality, not as a final clean BIRD
-score.
+timeout-limited; the raw-base timeout-30 cache pass observed 225 gold timeouts.
+They are useful for directionality, not as a final clean BIRD score.
 
 Observed BIRD failure modes are consistent with a hard pure-transfer setting:
 the project trained on Spider only, while BIRD has larger real-world schemas,
